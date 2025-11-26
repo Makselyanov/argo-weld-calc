@@ -1,5 +1,6 @@
 import {
     TypeOfWork,
+    WorkScope,
     Material,
     Thickness,
     WeldType,
@@ -16,6 +17,28 @@ export const WORK_TYPES: { value: TypeOfWork; label: string }[] = [
     { value: 'overlay', label: 'Наплавка' },
     { value: 'grinding', label: 'Зачистка' },
     { value: 'complex', label: 'Комплекс' },
+];
+
+/**
+ * Режим работы с заготовкой
+ * Влияет на итоговую стоимость через коэффициенты в pricing.ts
+ */
+export const WORK_SCOPES: { value: WorkScope; label: string; description: string }[] = [
+    { 
+        value: 'from_scratch', 
+        label: 'Изготовление с нуля',
+        description: 'Разметка, резка, подготовка кромок, подгонка, сборка, сварка'
+    },
+    { 
+        value: 'pre_cut', 
+        label: 'Сварка из заготовок',
+        description: 'Детали уже нарезаны, нужна только сборка и сварка'
+    },
+    { 
+        value: 'rework', 
+        label: 'Переделка/ремонт',
+        description: 'Разборка, удаление старых швов, доработка, сварка'
+    },
 ];
 
 export const MATERIALS: { value: Material; label: string }[] = [

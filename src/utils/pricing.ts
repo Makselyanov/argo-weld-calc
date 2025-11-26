@@ -1,5 +1,5 @@
-import type { CalculationFormData } from '@/types/calculation';
-import { MATERIAL_COEFF, THICKNESS_COEFF, SEAM_TYPE_COEFF } from '@/types/calculation';
+import type { CalculationFormData, WorkScope } from '@/types/calculation';
+import { MATERIAL_COEFF, THICKNESS_COEFF, SEAM_TYPE_COEFF, WORK_SCOPE_COEFF } from '@/types/calculation';
 
 export interface PriceResult {
     baseMin: number;
@@ -130,6 +130,11 @@ export function calculatePrice(form: CalculationFormData): PriceResult {
     const weldType = (SEAM_TYPE_COEFF[weldTypeKey as keyof typeof SEAM_TYPE_COEFF] ? weldTypeKey : 'butt') as keyof typeof SEAM_TYPE_COEFF;
     const sCoeff = SEAM_TYPE_COEFF[weldType] ?? 1.0;
 
+    // 4. Коэффициенты режима работы с заготовкой (workScope)
+    // pre_cut = база, from_scratch = дороже, rework = самый дорогой
+    const workScope: WorkScope = form.workScope || 'pre_cut';
+    const ws = WORK_SCOPE_COEFF[workScope];
+
     // ============================================
     // БАЗОВЫЕ СТАВКИ ДЛЯ ЧЁРНОГО МЕТАЛЛА (steel)
     // ОТКАЛИБРОВАНЫ ПОД РЕАЛИСТИЧНЫЕ ЦЕНЫ
@@ -185,18 +190,18 @@ export function calculatePrice(form: CalculationFormData): PriceResult {
 
     // ============================================
     // ПРИМЕНЕНИЕ ВСЕХ КОЭФФИЦИЕНТОВ
-    // Formula: Base * Material * Thickness * SeamType
+    // Formula: Base * Material * Thickness * SeamType * WorkScope
     // ============================================
 
-    // Сварка
-    const weldCost = (weldBase + backWeldBase) * m.weld * tCoeff * sCoeff;
+    // Сварка (применяем коэффициент workScope.weld)
+    const weldCost = (weldBase + backWeldBase) * m.weld * tCoeff * sCoeff * ws.weld;
 
-    // Подготовка (зачистка)
-    const prepCost = cleanupBase * m.prep * tCoeff * sCoeff;
+    // Подготовка (зачистка) — здесь workScope влияет сильнее всего
+    // При изготовлении с нуля много резки/подгонки, при переделке — разборка
+    const prepCost = cleanupBase * m.prep * tCoeff * sCoeff * ws.prep;
 
     // Финиш (сатинирование, покраска)
-    // Применяем все коэффициенты, как запрошено в задании (п. 1.1)
-    const finishCost = (satinBase + paintBase + varnishBase) * m.finish * tCoeff * sCoeff;
+    const finishCost = (satinBase + paintBase + varnishBase) * m.finish * tCoeff * sCoeff * ws.finish;
 
     // ============================================
     // ДОПОЛНИТЕЛЬНЫЕ МОДИФИКАТОРЫ (Положение, Условия, Срочность)
@@ -274,12 +279,30 @@ export function calculatePrice(form: CalculationFormData): PriceResult {
         totalMin = Math.round(totalMax * 0.7); // минимум = 70% от макс
     }
 
+    // Минимальный порог цены в зависимости от режима работы
+    // Защита от слишком низких цен для сложных работ
+    const SANITY_MIN_PRICES: Record<WorkScope, number> = {
+        pre_cut: 500,       // минимум 500 ₽ за простую сварку из заготовок
+        from_scratch: 1500, // минимум 1500 ₽ за изготовление с нуля
+        rework: 2000,       // минимум 2000 ₽ за переделку/ремонт
+    };
+    const minPrice = SANITY_MIN_PRICES[workScope];
+    
+    if (totalMin < minPrice) {
+        console.info(
+            `[pricing] Цена ${totalMin.toLocaleString('ru-RU')} ₽ ниже минимума для режима "${workScope}". ` +
+            `Поднимаем до ${minPrice.toLocaleString('ru-RU')} ₽.`
+        );
+        totalMin = minPrice;
+        totalMax = Math.max(totalMax, Math.round(minPrice * 1.3));
+    }
+
     const baseMin = totalMin;
     const baseMax = totalMax;
 
     console.info(
         `[pricing] Итоговая цена: ${totalMin.toLocaleString('ru-RU')} – ${totalMax.toLocaleString('ru-RU')} ₽ ` +
-        `(длина: ${weldLengthM.toFixed(2)} м, материал: ${material})`
+        `(длина: ${weldLengthM.toFixed(2)} м, материал: ${material}, режим: ${workScope})`
     );
 
     return { baseMin, baseMax, totalMin, totalMax };
