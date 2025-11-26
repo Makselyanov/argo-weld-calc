@@ -31,6 +31,10 @@ export function calculatePrice(form: CalculationFormData): PriceResult {
         base += 3000;
     } else if (form.material === 'cast_iron') {
         base += 4000;
+    } else if (form.material === 'copper' || form.material === 'brass') {
+        base += 5000;
+    } else if (form.material === 'titanium') {
+        base += 7000;
     }
 
     // Толщина

@@ -19,11 +19,13 @@ export const WORK_TYPES: { value: TypeOfWork; label: string }[] = [
 ];
 
 export const MATERIALS: { value: Material; label: string }[] = [
-    { value: 'steel', label: 'Черная сталь' },
+    { value: 'black_metal', label: 'Черный металл' },
     { value: 'stainless', label: 'Нержавейка' },
     { value: 'aluminium', label: 'Алюминий' },
     { value: 'cast_iron', label: 'Чугун' },
-    { value: 'other', label: 'Другое' },
+    { value: 'copper', label: 'Медь' },
+    { value: 'brass', label: 'Латунь' },
+    { value: 'titanium', label: 'Титан' },
 ];
 
 export const THICKNESSES: { value: Thickness; label: string }[] = [

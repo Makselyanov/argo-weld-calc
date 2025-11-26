@@ -1,11 +1,13 @@
 export type TypeOfWork = 'welding' | 'cutting' | 'overlay' | 'grinding' | 'complex';
 
 export type Material =
-  | 'steel'
+  | 'black_metal'
   | 'stainless'
   | 'aluminium'
   | 'cast_iron'
-  | 'other';
+  | 'copper'
+  | 'brass'
+  | 'titanium';
 
 export type Thickness =
   | 'lt_3'
