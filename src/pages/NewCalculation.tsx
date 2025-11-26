@@ -17,6 +17,7 @@ import {
 import { calculatePrice, PriceResult } from '@/utils/pricing';
 import {
   WORK_TYPES,
+  WORK_SCOPES,
   MATERIALS,
   THICKNESSES,
   WELD_TYPES,
@@ -40,6 +41,7 @@ export default function NewCalculation() {
     descriptionStep2: '',
     descriptionStep3: '',
     typeOfWork: null,
+    workScope: 'pre_cut', // по умолчанию: работа из заготовок
     material: null,
     thickness: null,
     weldType: null,
@@ -123,6 +125,7 @@ export default function NewCalculation() {
           descriptionStep2: formData.descriptionStep2,
           descriptionStep3: formData.descriptionStep3,
           typeOfWork: formData.typeOfWork,
+          workScope: formData.workScope, // режим работы с заготовкой
           material: formData.material,
           thickness: formData.thickness,
           seamType: formData.weldType,
@@ -306,6 +309,27 @@ export default function NewCalculation() {
                 </div>
               </div>
 
+              {/* Work Scope (Режим работы) */}
+              <div>
+                <Label className="text-foreground mb-3 block font-semibold">Режим работы</Label>
+                <div className="flex flex-col gap-3">
+                  {WORK_SCOPES.map(scope => (
+                    <div key={scope.value} className="flex flex-col">
+                      <ParameterChip
+                        label={scope.label}
+                        selected={formData.workScope === scope.value}
+                        onClick={() => setFormData({ ...formData, workScope: scope.value })}
+                      />
+                      {formData.workScope === scope.value && (
+                        <p className="text-xs text-muted-foreground mt-1 ml-2">
+                          {scope.description}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {/* Material */}
               <div>
                 <Label className="text-foreground mb-3 block">Материал</Label>
@@ -438,6 +462,7 @@ export default function NewCalculation() {
                 <p className="text-sm font-medium mb-2 text-foreground">Вы выбрали:</p>
                 <p className="text-sm text-muted-foreground">
                   {formData.typeOfWork && `Тип: ${getLabel(formData.typeOfWork, WORK_TYPES)}. `}
+                  {formData.workScope && `Режим: ${getLabel(formData.workScope, WORK_SCOPES.map(s => ({ value: s.value, label: s.label })))}. `}
                   {formData.material && `Материал: ${getLabel(formData.material, MATERIALS)}. `}
                   {formData.thickness && `Толщина: ${getLabel(formData.thickness, THICKNESSES)}. `}
                   {formData.weldType && `Шов: ${getLabel(formData.weldType, WELD_TYPES)}. `}
