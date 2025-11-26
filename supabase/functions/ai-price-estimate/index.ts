@@ -24,25 +24,29 @@ serve(async (req) => {
 - Описание работ (Шаг 1): ${data.description || "не указано"}
 - Уточнения по материалам (Шаг 2): ${data.descriptionStep2 || "нет"}
 - Комментарий к заказу (Шаг 3): ${data.descriptionStep3 || "нет"}
-- Тип работ: ${data.typeOfWork || "не указан"}
-- Материал: ${data.material || "не указан"}
-- Толщина: ${data.thickness || "не указана"}
-- Тип шва: ${data.seamType || "не указан"}
+- Тип работ (выбрано в меню): ${data.typeOfWork || "не указан"}
+- Материал (выбрано в меню): ${data.material || "не указан"}
+- Толщина (выбрано в меню): ${data.thickness || "не указана"}
+- Тип шва (выбрано в меню): ${data.seamType || "не указан"}
 - Положение сварки: ${data.position || "не указано"}
 - Условия работы: ${data.conditions?.join(", ") || "обычные"}
 - Срок выполнения: ${data.deadline || "обычный"}
 - Дополнительные услуги: ${data.extraServices?.join(", ") || "нет"}
 - Фотографии: ${data.photos?.length || 0} шт.
 
-**ПРАВИЛА АНАЛИЗА ТЕКСТА:**
-1. Используй текстовые поля ТОЛЬКО для уточнения:
-   - толщины (если указана явно, например "3 мм")
-   - типа шва (стык, тавр, нахлест)
-   - материала (латунь, титан и т.д.)
-   - сложности доступа
-2. **ЗАПРЕЩЕНО выдумывать размеры, длину швов или количество узлов**, если они не указаны явно.
-3. Если данные неоднозначные — расширяй диапазон totalMin/totalMax, но не придумывай числа.
-4. Фото используй только для оценки сложности доступа.
+**ПРАВИЛА АНАЛИЗА ТЕКСТА (СТРОГО):**
+1. **Приоритет данных:** Если в текстовых полях (Шаг 2, Шаг 3) указаны конкретные параметры (толщина, материал, тип шва), которые отличаются от выбранных в меню, ИСПОЛЬЗУЙ ДАННЫЕ ИЗ ТЕКСТА.
+2. **ЗАПРЕЩЕНО выдумывать:**
+   - размеры (длину шва, диаметр труб)
+   - толщину металла
+   - марку металла
+   - количество узлов
+   Используй ТОЛЬКО те цифры, которые ввёл пользователь. Если цифр нет — считай минимальный объем (1 метр) и укажи это в комментарии.
+3. **Фотографии:** Используй ТОЛЬКО для:
+   - оценки сложности доступа
+   - определения типа конструкции
+   - проверки, что это сварка
+   НЕ используй фото для определения размеров или толщины "на глаз".
 
 **СИСТЕМА РАСЧЁТА (КОЭФФИЦИЕНТЫ):**
 
@@ -52,13 +56,13 @@ serve(async (req) => {
    - finish_base_steel = 500 ₽/м² (финиш)
 
 2. **Коэффициенты материалов (MATERIAL_COEFF):**
-   - steel: { weld: 1.0, prep: 1.0, finish: 1.0 }
-   - stainless: { weld: 1.4, prep: 1.3, finish: 1.2 }
-   - aluminium: { weld: 1.5, prep: 1.3, finish: 1.1 }
-   - cast_iron: { weld: 1.8, prep: 1.6, finish: 1.1 }
-   - copper: { weld: 1.7, prep: 1.4, finish: 1.2 }
-   - brass: { weld: 1.4, prep: 1.2, finish: 1.1 }
-   - titanium: { weld: 2.2, prep: 1.7, finish: 1.3 }
+   - steel (черный металл): { weld: 1.0, prep: 1.0, finish: 1.0 }
+   - stainless (нержавейка): { weld: 1.4, prep: 1.3, finish: 1.2 }
+   - aluminium (алюминий): { weld: 1.5, prep: 1.3, finish: 1.1 }
+   - cast_iron (чугун): { weld: 1.8, prep: 1.6, finish: 1.1 }
+   - copper (медь): { weld: 1.7, prep: 1.4, finish: 1.2 }
+   - brass (латунь): { weld: 1.4, prep: 1.2, finish: 1.1 }
+   - titanium (титан): { weld: 2.2, prep: 1.7, finish: 1.3 }
 
 3. **Коэффициенты толщины (THICKNESS_COEFF):**
    - lt_3 (до 3 мм): 1.0
@@ -69,26 +73,24 @@ serve(async (req) => {
 
 4. **Коэффициенты типа шва (SEAM_TYPE_COEFF):**
    - butt (стыковой): 1.0
-   - fillet/corner/tee (угловой/тавровый): 1.15
-   - overlap/lap (нахлёст): 1.1
+   - corner/tee (угловой/тавровый): 1.15
+   - lap (нахлёст): 1.1
    - pipe (труба): 1.25
 
 **ФОРМУЛЫ:**
 weld_cost = weld_base_steel * material_coeff.weld * thickness_coeff * seam_type_coeff * weld_length_m
-prep_cost = prep_base_steel * material_coeff.prep * thickness_coeff * weld_length_m
-finish_cost = finish_base_steel * material_coeff.finish * weld_length_m * 0.1 (площадь условно)
+prep_cost = prep_base_steel * material_coeff.prep * thickness_coeff * seam_type_coeff * weld_length_m
+finish_cost = finish_base_steel * material_coeff.finish * thickness_coeff * seam_type_coeff * weld_length_m * 0.1
 
 total = weld_cost + prep_cost + finish_cost
 totalMin = total * 0.9
 totalMax = total * 1.2
 
-**ВАЖНО:** Если длина шва не указана, возьми минимальную реалистичную (например, 1 метр) и укажи это в комментарии.
-
 **Верни ТОЛЬКО JSON в формате:**
 {
   "totalMin": number,
   "totalMax": number,
-  "comment": "Короткое объяснение цены"
+  "comment": "Короткое объяснение цены. Укажи, какие параметры были взяты из текста, если они отличались."
 }
 `;
 

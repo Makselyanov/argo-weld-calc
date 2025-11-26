@@ -8,26 +8,67 @@ export interface PriceResult {
     totalMax: number;
 }
 
+// Helper to parse overrides from text
+function parseOverridesFromText(text: string) {
+    const lower = text.toLowerCase();
+    let materialOverride: string | undefined;
+    let thicknessOverride: string | undefined;
+    let weldTypeOverride: string | undefined;
+
+    // Material
+    if (lower.includes('латунь')) materialOverride = 'brass';
+    else if (lower.includes('нержавейк') || lower.includes('нержавеющ')) materialOverride = 'stainless';
+    else if (lower.includes('медь')) materialOverride = 'copper';
+    else if (lower.includes('титан')) materialOverride = 'titanium';
+    else if (lower.includes('чугун')) materialOverride = 'cast_iron';
+    else if (lower.includes('алюминий')) materialOverride = 'aluminium';
+    else if (lower.includes('черный') || lower.includes('чёрный') || lower.includes('сталь')) materialOverride = 'steel';
+
+    // Thickness (regex for "X мм" or "Xmm")
+    const thicknessMatch = lower.match(/(\d+([.,]\d+)?)\s*(мм|mm)/);
+    if (thicknessMatch) {
+        const val = parseFloat(thicknessMatch[1].replace(',', '.'));
+        if (val < 3) thicknessOverride = 'lt_3';
+        else if (val >= 3 && val < 6) thicknessOverride = 'mm_3_6';
+        else if (val >= 6 && val <= 12) thicknessOverride = 'mm_6_12';
+        else if (val > 12) thicknessOverride = 'gt_12';
+    }
+
+    // Weld Type
+    if (lower.includes('стык')) weldTypeOverride = 'butt';
+    else if (lower.includes('угл')) weldTypeOverride = 'corner';
+    else if (lower.includes('тавр')) weldTypeOverride = 'tee';
+    else if (lower.includes('нахлест') || lower.includes('нахлёст')) weldTypeOverride = 'lap';
+    else if (lower.includes('труб')) weldTypeOverride = 'pipe';
+
+    return { materialOverride, thicknessOverride, weldTypeOverride };
+}
+
 export function calculatePrice(form: CalculationFormData): PriceResult {
     /**
      * Новая система расчёта с коэффициентами материалов, толщины и типа шва
      * Базовые цены указаны для чёрного металла (steel)
      */
 
+    // Parse overrides from text fields
+    const combinedText = `${form.descriptionStep2 || ''} ${form.descriptionStep3 || ''}`;
+    const overrides = parseOverridesFromText(combinedText);
+
     // 1. Коэффициенты материала
-    const material = form.material ?? 'steel';
+    // Приоритет: текст > форма > дефолт
+    const materialKey = overrides.materialOverride || form.material || 'steel';
+    // Приводим к типу Material (если парсер вернул валидный ключ)
+    const material = (MATERIAL_COEFF[materialKey as keyof typeof MATERIAL_COEFF] ? materialKey : 'steel') as keyof typeof MATERIAL_COEFF;
     const m = MATERIAL_COEFF[material];
 
     // 2. Коэффициенты толщины
-    const thickness = form.thickness ?? 'unknown';
-    // Если толщина не выбрана или unknown, берем 1.1 (как в константе unknown)
+    const thicknessKey = overrides.thicknessOverride || form.thickness || 'unknown';
+    const thickness = (THICKNESS_COEFF[thicknessKey as keyof typeof THICKNESS_COEFF] ? thicknessKey : 'unknown') as keyof typeof THICKNESS_COEFF;
     const tCoeff = THICKNESS_COEFF[thickness] ?? 1.1;
 
     // 3. Коэффициенты типа шва
-    const weldType = form.weldType ?? 'butt';
-    // Если тип не выбран, считаем как стыковой (1.0)
-    // В SEAM_TYPE_COEFF ключи: butt, corner, tee, lap, pipe
-    // В WeldType: butt, corner, tee, lap, pipe. Совпадают.
+    const weldTypeKey = overrides.weldTypeOverride || form.weldType || 'butt';
+    const weldType = (SEAM_TYPE_COEFF[weldTypeKey as keyof typeof SEAM_TYPE_COEFF] ? weldTypeKey : 'butt') as keyof typeof SEAM_TYPE_COEFF;
     const sCoeff = SEAM_TYPE_COEFF[weldType] ?? 1.0;
 
     // ============================================

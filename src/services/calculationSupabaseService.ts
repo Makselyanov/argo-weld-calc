@@ -14,6 +14,8 @@ export interface StoredCalculationSummary {
 export interface DetailedCalculation {
     id: string;
     description: string;
+    descriptionStep2?: string;
+    descriptionStep3?: string;
     typeOfWork: string | null;
     material: string | null;
     thickness: string | null;
@@ -35,7 +37,9 @@ export async function saveCalculation(form: CalculationFormData, price: PriceRes
         const { data, error } = await supabase
             .from('calculations')
             .insert({
-                description: `${form.description}\n\n[Уточнения по материалам]: ${form.descriptionStep2 || 'нет'}\n\n[Комментарий к заказу]: ${form.descriptionStep3 || 'нет'}`,
+                description: form.description,
+                description_step2: form.descriptionStep2 || null,
+                description_step3: form.descriptionStep3 || null,
                 photos: form.photos, // jsonb
                 type_of_work: form.typeOfWork,
                 material: form.material,
@@ -70,6 +74,8 @@ export async function saveCalculation(form: CalculationFormData, price: PriceRes
                 body: {
                     id: data.id,
                     description: form.description,
+                    descriptionStep2: form.descriptionStep2,
+                    descriptionStep3: form.descriptionStep3,
                     typeOfWork: form.typeOfWork,
                     material: form.material,
                     deadline: form.deadline,
@@ -129,6 +135,8 @@ export async function getAllCalculations(): Promise<DetailedCalculation[]> {
         return (data || []).map((item) => ({
             id: item.id,
             description: item.description,
+            descriptionStep2: item.description_step2,
+            descriptionStep3: item.description_step3,
             typeOfWork: item.type_of_work,
             material: item.material,
             thickness: item.thickness,
