@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/GlassCard';
 import { GlassButton } from '@/components/GlassButton';
@@ -7,61 +7,160 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { calculationService, calculateBasePrice, calculateExtraServices } from '@/services/calculationService';
-import { Calculation, CalculationParams } from '@/types/calculation';
 import { ArrowLeft } from 'lucide-react';
+
+import {
+  CalculationFormData,
+  Condition,
+  ExtraService
+} from '@/types/calculation';
+import { calculatePrice, PriceResult } from '@/utils/pricing';
+import {
+  WORK_TYPES,
+  MATERIALS,
+  THICKNESSES,
+  WELD_TYPES,
+  POSITIONS,
+  CONDITIONS,
+  MATERIAL_OWNERS,
+  DEADLINES,
+  EXTRA_SERVICES,
+  getLabel
+} from '@/constants/calculationMappings';
+import { saveCalculation } from '@/services/calculationSupabaseService';
+import { supabase } from '@/lib/supabaseClient';
 
 export default function NewCalculation() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(1);
-  
-  // Step 1 data
-  const [description, setDescription] = useState('');
-  const [photos, setPhotos] = useState<string[]>([]);
-  
-  // Step 2 data
-  const [params, setParams] = useState<CalculationParams>({
-    typeOfWork: '',
-    material: '',
-    thickness: '',
-    weldType: '',
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+
+  const [formData, setFormData] = useState<CalculationFormData>({
+    photos: [],
+    description: '',
+    typeOfWork: null,
+    material: null,
+    thickness: null,
+    weldType: null,
     volume: '',
-    position: '',
+    position: null,
     conditions: [],
-    materialOwner: '',
-    deadlineType: ''
+    materialOwner: null,
+    deadline: null,
+    extraServices: []
   });
 
-  // Step 3 data
-  const [extraServices, setExtraServices] = useState<string[]>([]);
-  const [priceRange, setPriceRange] = useState({ min: 0, max: 0 });
+  const [priceResult, setPriceResult] = useState<PriceResult | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isCalculatingPrice, setIsCalculatingPrice] = useState(false);
+  const [priceCalculationMethod, setPriceCalculationMethod] = useState<'ai' | 'fallback' | null>(null);
+  const [aiComment, setAiComment] = useState<string | null>(null);
+
+  // Recalculate price when extra services change in step 3
+  useEffect(() => {
+    if (step === 3) {
+      const result = calculatePrice(formData);
+      setPriceResult(result);
+    }
+  }, [formData.extraServices, step]);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (files) {
-      const newPhotos = Array.from(files).map(file => URL.createObjectURL(file));
-      setPhotos([...photos, ...newPhotos]);
+    if (files && files.length > 0) {
+      const newPhotos: string[] = [];
+      const fileList = Array.from(files);
+
+      let processedCount = 0;
+      fileList.forEach(file => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (typeof reader.result === 'string') {
+            newPhotos.push(reader.result);
+          }
+          processedCount++;
+          if (processedCount === fileList.length) {
+            setFormData(prev => ({
+              ...prev,
+              photos: [...prev.photos, ...newPhotos]
+            }));
+          }
+        };
+        reader.readAsDataURL(file);
+      });
     }
   };
 
-  const handleNext = () => {
-    if (step === 2) {
-      const basePrice = calculateBasePrice(params);
-      setPriceRange(basePrice);
+  const handleNext = async () => {
+    if (step === 1) {
+      if (formData.description.trim()) {
+        setStep(2);
+      }
+    } else if (step === 2) {
+      // Validate required fields
+      if (formData.typeOfWork && formData.material && formData.thickness && formData.weldType) {
+        await calculatePriceWithAI();
+        setStep(3);
+      }
     }
-    setStep(step + 1);
+  };
+
+  // Функция расчёта цены с использованием AI и fallback
+  const calculatePriceWithAI = async () => {
+    setIsCalculatingPrice(true);
+    setPriceCalculationMethod(null);
+    setAiComment(null);
+
+    try {
+      // Пытаемся получить расчёт от AI
+      const { data, error } = await supabase.functions.invoke('ai-price-estimate', {
+        body: {
+          description: formData.description,
+          typeOfWork: formData.typeOfWork,
+          material: formData.material,
+          thickness: formData.thickness,
+          seamType: formData.weldType,
+          position: formData.position,
+          conditions: formData.conditions,
+          deadline: formData.deadline,
+          extraServices: formData.extraServices,
+          photos: formData.photos // DataURL или ссылки на фото
+        }
+      });
+
+      if (error || !data || typeof data.totalMin !== 'number' || typeof data.totalMax !== 'number') {
+        throw new Error('AI calculation failed');
+      }
+
+      // Успешный расчёт через AI
+      setPriceResult({
+        baseMin: data.totalMin,
+        baseMax: data.totalMax,
+        totalMin: data.totalMin,
+        totalMax: data.totalMax
+      });
+      setPriceCalculationMethod('ai');
+      setAiComment(data.comment || null);
+    } catch (err) {
+      // Fallback на локальный калькулятор
+      console.warn('AI расчёт не удался, используем локальный калькулятор:', err);
+      const result = calculatePrice(formData);
+      setPriceResult(result);
+      setPriceCalculationMethod('fallback');
+    } finally {
+      setIsCalculatingPrice(false);
+    }
   };
 
   const handleBack = () => {
     if (step === 1) {
       navigate('/');
     } else {
-      setStep(step - 1);
+      setStep(prev => (prev - 1) as 1 | 2 | 3);
     }
   };
 
-  const toggleCondition = (condition: string) => {
-    setParams(prev => ({
+  const toggleCondition = (condition: Condition) => {
+    setFormData(prev => ({
       ...prev,
       conditions: prev.conditions.includes(condition)
         ? prev.conditions.filter(c => c !== condition)
@@ -69,40 +168,38 @@ export default function NewCalculation() {
     }));
   };
 
-  const toggleExtraService = (service: string) => {
-    const newServices = extraServices.includes(service)
-      ? extraServices.filter(s => s !== service)
-      : [...extraServices, service];
-    
-    setExtraServices(newServices);
-    
-    // Recalculate price with extra services
-    const basePrice = calculateBasePrice(params);
-    const extraPrice = calculateExtraServices(newServices);
-    setPriceRange({
-      min: basePrice.min + extraPrice.min,
-      max: basePrice.max + extraPrice.max
-    });
+  const toggleExtraService = (service: ExtraService) => {
+    setFormData(prev => ({
+      ...prev,
+      extraServices: prev.extraServices.includes(service)
+        ? prev.extraServices.filter(s => s !== service)
+        : [...prev.extraServices, service]
+    }));
   };
 
-  const handleOrder = () => {
-    const calculation: Calculation = {
-      id: Date.now().toString(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      description,
-      photos,
-      ...params,
-      basePriceMin: calculateBasePrice(params).min,
-      basePriceMax: calculateBasePrice(params).max,
-      totalPriceMin: priceRange.min,
-      totalPriceMax: priceRange.max,
-      extraServices,
-      status: 'ordered'
-    };
-    
-    calculationService.save(calculation);
-    navigate('/order-confirmation');
+  const handleOrder = async () => {
+    if (!priceResult) return;
+
+    try {
+      setIsSaving(true);
+      setSaveError(null);
+
+      // Сохраняем расчёт в Supabase
+      await saveCalculation(formData, priceResult);
+
+      // Перенаправляем на страницу подтверждения
+      navigate('/order-confirmation');
+    } catch (error) {
+      console.error('Ошибка при сохранении расчёта:', error);
+      setSaveError('Не удалось сохранить расчёт. Попробуйте ещё раз.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDiscuss = () => {
+    console.log('Discuss clicked - link to chat will be here');
+    navigate('/');
   };
 
   return (
@@ -119,7 +216,7 @@ export default function NewCalculation() {
         {step === 1 && (
           <GlassCard className="space-y-6">
             <h2 className="text-2xl font-bold text-center">Шаг 1. Фото и описание</h2>
-            
+
             <div className="space-y-4">
               <div>
                 <Label className="text-foreground mb-2 block">Фотографии</Label>
@@ -133,10 +230,10 @@ export default function NewCalculation() {
                     className="hidden"
                   />
                 </label>
-                
-                {photos.length > 0 && (
+
+                {formData.photos.length > 0 && (
                   <div className="mt-4 grid grid-cols-3 gap-2">
-                    {photos.map((photo, idx) => (
+                    {formData.photos.map((photo, idx) => (
                       <div key={idx} className="relative aspect-square rounded-lg overflow-hidden border border-border">
                         <img src={photo} alt={`Preview ${idx + 1}`} className="w-full h-full object-cover" />
                       </div>
@@ -148,8 +245,8 @@ export default function NewCalculation() {
               <div>
                 <Label className="text-foreground mb-2 block">Описание работ</Label>
                 <Textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   placeholder="Опиши, что нужно сварить, где стоит узел, есть ли старый шов…"
                   className="min-h-[120px] bg-input/50 border-border/50 text-foreground placeholder:text-muted-foreground"
                 />
@@ -159,7 +256,7 @@ export default function NewCalculation() {
             <GlassButton
               variant="primary"
               onClick={handleNext}
-              disabled={!description.trim()}
+              disabled={!formData.description.trim()}
               className="w-full"
             >
               Далее ➜ Параметры
@@ -170,142 +267,151 @@ export default function NewCalculation() {
         {step === 2 && (
           <GlassCard className="space-y-6">
             <h2 className="text-2xl font-bold text-center">Шаг 2. Параметры работ</h2>
-            
+
             <div className="space-y-6">
+              {/* Type of Work */}
               <div>
                 <Label className="text-foreground mb-3 block">Тип работ</Label>
                 <div className="flex flex-wrap gap-2">
-                  {['Сварка', 'Резка', 'Наплавка', 'Зачистка', 'Комплекс'].map(type => (
+                  {WORK_TYPES.map(type => (
                     <ParameterChip
-                      key={type}
-                      label={type}
-                      selected={params.typeOfWork === type}
-                      onClick={() => setParams({ ...params, typeOfWork: type })}
+                      key={type.value}
+                      label={type.label}
+                      selected={formData.typeOfWork === type.value}
+                      onClick={() => setFormData({ ...formData, typeOfWork: type.value })}
                     />
                   ))}
                 </div>
               </div>
 
+              {/* Material */}
               <div>
                 <Label className="text-foreground mb-3 block">Материал</Label>
                 <div className="flex flex-wrap gap-2">
-                  {['Черная сталь', 'Нержавейка', 'Алюминий', 'Чугун', 'Другое'].map(mat => (
+                  {MATERIALS.map(mat => (
                     <ParameterChip
-                      key={mat}
-                      label={mat}
-                      selected={params.material === mat}
-                      onClick={() => setParams({ ...params, material: mat })}
+                      key={mat.value}
+                      label={mat.label}
+                      selected={formData.material === mat.value}
+                      onClick={() => setFormData({ ...formData, material: mat.value })}
                     />
                   ))}
                 </div>
               </div>
 
+              {/* Thickness */}
               <div>
                 <Label className="text-foreground mb-3 block">Толщина</Label>
                 <div className="flex flex-wrap gap-2">
-                  {['до 3 мм', '3–6 мм', '6–12 мм', '12+ мм', 'Не знаю'].map(thick => (
+                  {THICKNESSES.map(thick => (
                     <ParameterChip
-                      key={thick}
-                      label={thick}
-                      selected={params.thickness === thick}
-                      onClick={() => setParams({ ...params, thickness: thick })}
+                      key={thick.value}
+                      label={thick.label}
+                      selected={formData.thickness === thick.value}
+                      onClick={() => setFormData({ ...formData, thickness: thick.value })}
                     />
                   ))}
                 </div>
               </div>
 
+              {/* Weld Type */}
               <div>
                 <Label className="text-foreground mb-3 block">Тип шва</Label>
                 <div className="flex flex-wrap gap-2">
-                  {['Стыковой', 'Угловой', 'Тавровый', 'Нахлёст', 'Труба-труба'].map(weld => (
+                  {WELD_TYPES.map(weld => (
                     <ParameterChip
-                      key={weld}
-                      label={weld}
-                      selected={params.weldType === weld}
-                      onClick={() => setParams({ ...params, weldType: weld })}
+                      key={weld.value}
+                      label={weld.label}
+                      selected={formData.weldType === weld.value}
+                      onClick={() => setFormData({ ...formData, weldType: weld.value })}
                     />
                   ))}
                 </div>
               </div>
 
+              {/* Volume */}
               <div>
                 <Label className="text-foreground mb-2 block">Объём работ</Label>
                 <Input
-                  value={params.volume}
-                  onChange={(e) => setParams({ ...params, volume: e.target.value })}
+                  value={formData.volume}
+                  onChange={(e) => setFormData({ ...formData, volume: e.target.value })}
                   placeholder="Например: длина шва 6 метров"
                   className="bg-input/50 border-border/50 text-foreground"
                 />
               </div>
 
+              {/* Position */}
               <div>
                 <Label className="text-foreground mb-3 block">Положение</Label>
                 <div className="flex flex-wrap gap-2">
-                  {['Нижнее', 'Вертикальное', 'Потолочное', 'Смешанное'].map(pos => (
+                  {POSITIONS.map(pos => (
                     <ParameterChip
-                      key={pos}
-                      label={pos}
-                      selected={params.position === pos}
-                      onClick={() => setParams({ ...params, position: pos })}
+                      key={pos.value}
+                      label={pos.label}
+                      selected={formData.position === pos.value}
+                      onClick={() => setFormData({ ...formData, position: pos.value })}
                     />
                   ))}
                 </div>
               </div>
 
+              {/* Conditions */}
               <div>
                 <Label className="text-foreground mb-3 block">Условия работы</Label>
-                <div className="space-y-2">
-                  {['В помещении', 'На улице', 'Высота/леса', 'Стеснённый доступ'].map(cond => (
-                    <label key={cond} className="flex items-center gap-3 cursor-pointer">
-                      <Checkbox
-                        checked={params.conditions.includes(cond)}
-                        onCheckedChange={() => toggleCondition(cond)}
-                      />
-                      <span className="text-foreground">{cond}</span>
-                    </label>
+                <div className="flex flex-wrap gap-2">
+                  {CONDITIONS.map(cond => (
+                    <ParameterChip
+                      key={cond.value}
+                      label={cond.label}
+                      selected={formData.conditions.includes(cond.value)}
+                      onClick={() => toggleCondition(cond.value)}
+                    />
                   ))}
                 </div>
               </div>
 
+              {/* Material Owner */}
               <div>
                 <Label className="text-foreground mb-3 block">Материал</Label>
                 <div className="flex flex-wrap gap-2">
-                  {['Материал заказчика', 'Материал исполнителя'].map(owner => (
+                  {MATERIAL_OWNERS.map(owner => (
                     <ParameterChip
-                      key={owner}
-                      label={owner}
-                      selected={params.materialOwner === owner}
-                      onClick={() => setParams({ ...params, materialOwner: owner })}
+                      key={owner.value}
+                      label={owner.label}
+                      selected={formData.materialOwner === owner.value}
+                      onClick={() => setFormData({ ...formData, materialOwner: owner.value })}
                     />
                   ))}
                 </div>
               </div>
 
+              {/* Deadline */}
               <div>
                 <Label className="text-foreground mb-3 block">Срок выполнения</Label>
                 <div className="flex flex-wrap gap-2">
-                  {['Обычно', 'Срочно', 'Ночью/сменами'].map(deadline => (
+                  {DEADLINES.map(deadline => (
                     <ParameterChip
-                      key={deadline}
-                      label={deadline}
-                      selected={params.deadlineType === deadline}
-                      onClick={() => setParams({ ...params, deadlineType: deadline })}
+                      key={deadline.value}
+                      label={deadline.label}
+                      selected={formData.deadline === deadline.value}
+                      onClick={() => setFormData({ ...formData, deadline: deadline.value })}
                     />
                   ))}
                 </div>
               </div>
 
+              {/* Summary */}
               <div className="glass-card p-4 bg-muted/10">
                 <p className="text-sm font-medium mb-2 text-foreground">Вы выбрали:</p>
                 <p className="text-sm text-muted-foreground">
-                  {params.typeOfWork && `Тип: ${params.typeOfWork}. `}
-                  {params.material && `Материал: ${params.material}. `}
-                  {params.thickness && `Толщина: ${params.thickness}. `}
-                  {params.weldType && `Шов: ${params.weldType}. `}
-                  {params.position && `Положение: ${params.position}. `}
-                  {params.conditions.length > 0 && `Условия: ${params.conditions.join(', ')}. `}
-                  {params.materialOwner && `${params.materialOwner}. `}
-                  {params.deadlineType && `Срок: ${params.deadlineType}.`}
+                  {formData.typeOfWork && `Тип: ${getLabel(formData.typeOfWork, WORK_TYPES)}. `}
+                  {formData.material && `Материал: ${getLabel(formData.material, MATERIALS)}. `}
+                  {formData.thickness && `Толщина: ${getLabel(formData.thickness, THICKNESSES)}. `}
+                  {formData.weldType && `Шов: ${getLabel(formData.weldType, WELD_TYPES)}. `}
+                  {formData.position && `Положение: ${getLabel(formData.position, POSITIONS)}. `}
+                  {formData.conditions.length > 0 && `Условия: ${formData.conditions.map(c => getLabel(c, CONDITIONS)).join(', ')}. `}
+                  {formData.materialOwner && `${getLabel(formData.materialOwner, MATERIAL_OWNERS)}. `}
+                  {formData.deadline && `Срок: ${getLabel(formData.deadline, DEADLINES)}.`}
                 </p>
               </div>
             </div>
@@ -313,53 +419,80 @@ export default function NewCalculation() {
             <GlassButton
               variant="primary"
               onClick={handleNext}
-              disabled={!params.typeOfWork || !params.material || !params.thickness || !params.weldType || !params.position || !params.materialOwner || !params.deadlineType}
+              disabled={!formData.typeOfWork || !formData.material || !formData.thickness || !formData.weldType || isCalculatingPrice}
               className="w-full"
             >
-              ✅ Готово, посчитать
+              {isCalculatingPrice ? '🤖 Идёт расчёт цены нейросетью...' : '✅ Готово, посчитать'}
             </GlassButton>
           </GlassCard>
         )}
 
-        {step === 3 && (
+        {step === 3 && priceResult && (
           <GlassCard className="space-y-6">
             <h2 className="text-2xl font-bold text-center">Оценка стоимости</h2>
-            
-            <div className="glass-card p-6 bg-accent/10 border-accent/30 text-center">
+
+            <div className="glass-card p-6 bg-accent/10 border-accent/30 text-center space-y-3">
               <div className="text-4xl font-bold text-foreground mb-2">
-                {priceRange.min.toLocaleString()} – {priceRange.max.toLocaleString()} ₽
+                {priceResult.totalMin.toLocaleString()} – {priceResult.totalMax.toLocaleString()} ₽
               </div>
               <p className="text-sm text-muted-foreground">
-                {params.typeOfWork}, {params.weldType.toLowerCase()} шов, {params.material.toLowerCase()}, {params.volume || 'объём не указан'}
+                {getLabel(formData.typeOfWork, WORK_TYPES)}, {getLabel(formData.weldType, WELD_TYPES)?.toLowerCase()} шов, {getLabel(formData.material, MATERIALS)?.toLowerCase()}, {formData.volume || 'объём не указан'}
               </p>
+
+              {/* Информация о методе расчёта */}
+              {priceCalculationMethod === 'ai' && (
+                <div className="text-xs text-green-500 flex items-center justify-center gap-2">
+                  <span>🤖</span>
+                  <span>Расчёт выполнен искусственным интеллектом</span>
+                </div>
+              )}
+              {priceCalculationMethod === 'fallback' && (
+                <div className="text-xs text-yellow-500">
+                  ⚠️ Не удалось рассчитать через нейросеть, использован базовый калькулятор
+                </div>
+              )}
+
+              {/* Комментарий от AI */}
+              {aiComment && (
+                <p className="text-sm text-muted-foreground italic mt-2">
+                  💬 {aiComment}
+                </p>
+              )}
             </div>
 
             <div>
               <h3 className="text-lg font-semibold mb-4 text-foreground">Дополнительные услуги</h3>
               <div className="space-y-3">
-                {['ВИК', 'УЗК', 'Опрессовка', 'Проверка мылом', 'Акты и протоколы'].map(service => (
-                  <label key={service} className="flex items-center gap-3 cursor-pointer">
+                {EXTRA_SERVICES.map(service => (
+                  <label key={service.value} className="flex items-center gap-3 cursor-pointer">
                     <Checkbox
-                      checked={extraServices.includes(service)}
-                      onCheckedChange={() => toggleExtraService(service)}
+                      checked={formData.extraServices.includes(service.value)}
+                      onCheckedChange={() => toggleExtraService(service.value)}
                     />
-                    <span className="text-foreground">{service}</span>
+                    <span className="text-foreground">{service.label}</span>
                   </label>
                 ))}
               </div>
             </div>
 
             <div className="space-y-3">
+              {saveError && (
+                <div className="glass-card p-3 bg-destructive/10 border-destructive/30 text-center">
+                  <p className="text-sm text-destructive">{saveError}</p>
+                </div>
+              )}
+
               <GlassButton
                 variant="secondary"
                 onClick={handleOrder}
+                disabled={isSaving}
                 className="w-full text-lg"
               >
-                📩 Заказать работу
+                {isSaving ? '⏳ Сохранение...' : '📩 Заказать работу'}
               </GlassButton>
-              
+
               <GlassButton
-                onClick={() => navigate('/')}
+                onClick={handleDiscuss}
                 className="w-full"
               >
                 💬 Обсудить со сварщиком

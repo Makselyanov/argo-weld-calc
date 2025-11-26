@@ -5,6 +5,16 @@ import { GlassButton } from '@/components/GlassButton';
 import { calculationService } from '@/services/calculationService';
 import { Calculation } from '@/types/calculation';
 import { ArrowLeft } from 'lucide-react';
+import {
+  WORK_TYPES,
+  MATERIALS,
+  THICKNESSES,
+  WELD_TYPES,
+  POSITIONS,
+  CONDITIONS,
+  DEADLINES,
+  getLabel
+} from '@/constants/calculationMappings';
 
 export default function CalculationDetail() {
   const navigate = useNavigate();
@@ -42,11 +52,10 @@ export default function CalculationDetail() {
         <GlassCard className="space-y-6">
           <div className="flex justify-between items-start">
             <h2 className="text-2xl font-bold">Детали расчёта</h2>
-            <span className={`text-xs px-3 py-1 rounded ${
-              calculation.status === 'ordered' 
-                ? 'bg-primary/20 text-primary' 
+            <span className={`text-xs px-3 py-1 rounded ${calculation.status === 'ordered'
+                ? 'bg-primary/20 text-primary'
                 : 'bg-muted/20 text-muted-foreground'
-            }`}>
+              }`}>
               {calculation.status === 'ordered' ? 'Заявка отправлена' : 'Черновик'}
             </span>
           </div>
@@ -93,27 +102,27 @@ export default function CalculationDetail() {
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <span className="text-muted-foreground">Тип работ:</span>
-                <p className="text-foreground font-medium">{calculation.typeOfWork}</p>
+                <p className="text-foreground font-medium">{getLabel(calculation.typeOfWork, WORK_TYPES)}</p>
               </div>
               <div>
                 <span className="text-muted-foreground">Материал:</span>
-                <p className="text-foreground font-medium">{calculation.material}</p>
+                <p className="text-foreground font-medium">{getLabel(calculation.material, MATERIALS)}</p>
               </div>
               <div>
                 <span className="text-muted-foreground">Толщина:</span>
-                <p className="text-foreground font-medium">{calculation.thickness}</p>
+                <p className="text-foreground font-medium">{getLabel(calculation.thickness, THICKNESSES)}</p>
               </div>
               <div>
                 <span className="text-muted-foreground">Тип шва:</span>
-                <p className="text-foreground font-medium">{calculation.weldType}</p>
+                <p className="text-foreground font-medium">{getLabel(calculation.weldType, WELD_TYPES)}</p>
               </div>
               <div>
                 <span className="text-muted-foreground">Положение:</span>
-                <p className="text-foreground font-medium">{calculation.position}</p>
+                <p className="text-foreground font-medium">{getLabel(calculation.position, POSITIONS)}</p>
               </div>
               <div>
                 <span className="text-muted-foreground">Срок:</span>
-                <p className="text-foreground font-medium">{calculation.deadlineType}</p>
+                <p className="text-foreground font-medium">{getLabel(calculation.deadline, DEADLINES)}</p>
               </div>
               {calculation.volume && (
                 <div className="col-span-2">
@@ -124,7 +133,7 @@ export default function CalculationDetail() {
               {calculation.conditions.length > 0 && (
                 <div className="col-span-2">
                   <span className="text-muted-foreground">Условия:</span>
-                  <p className="text-foreground font-medium">{calculation.conditions.join(', ')}</p>
+                  <p className="text-foreground font-medium">{calculation.conditions.map(c => getLabel(c, CONDITIONS)).join(', ')}</p>
                 </div>
               )}
             </div>
