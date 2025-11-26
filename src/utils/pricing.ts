@@ -6,6 +6,65 @@ export interface PriceResult {
     baseMax: number;
     totalMin: number;
     totalMax: number;
+    // Данные от AI (опционально)
+    reasonShort?: string;      // Короткое объяснение цены от AI
+    reasonLong?: string;       // Развёрнутое КП от AI
+    warnings?: string[];       // Предупреждения от AI
+}
+
+
+/**
+ * Парсит длину из строки и конвертирует в метры
+ * Примеры входных данных:
+ * - "10 м" → 10
+ * - "1630 см" → 16.3
+ * - "8 метров" → 8
+ * - "5000 мм" → 5
+ * - "12" → 12 (по умолчанию метры)
+ * 
+ * Защита: если длина > 200 м, логируем warning и ограничиваем до 200 м
+ */
+function parseLengthToMeters(raw: string): number {
+    const normalized = raw.toLowerCase().trim();
+
+    // Извлекаем число (может быть целое или десятичное)
+    const numberMatch = normalized.match(/(\d+(?:[.,]\d+)?)/);
+    if (!numberMatch) {
+        console.warn(`[pricing] Не удалось извлечь число из "${raw}", используем 1 м по умолчанию`);
+        return 1;
+    }
+
+    const value = parseFloat(numberMatch[1].replace(',', '.'));
+    if (Number.isNaN(value) || value <= 0) {
+        console.warn(`[pricing] Некорректное значение "${raw}", используем 1 м по умолчанию`);
+        return 1;
+    }
+
+    // Определяем единицы измерения
+    let meters = value; // по умолчанию считаем метрами
+
+    if (normalized.includes('мм') || normalized.includes('mm')) {
+        meters = value / 1000; // миллиметры → метры
+    } else if (normalized.includes('см') || normalized.includes('cm')) {
+        meters = value / 100; // сантиметры → метры
+    } else if (normalized.includes('м') || normalized.includes('m')) {
+        meters = value; // уже в метрах
+    }
+    // Если единицы не указаны, считаем метрами (meters = value)
+
+    // Защита от аномально больших значений
+    const MAX_LENGTH_M = 200;
+    if (meters > MAX_LENGTH_M) {
+        console.warn(
+            `[pricing] ⚠️ Длина ${meters.toFixed(2)} м превышает лимит ${MAX_LENGTH_M} м. ` +
+            `Возможно, ввели сантиметры как метры? Ограничиваем до ${MAX_LENGTH_M} м. ` +
+            `Исходная строка: "${raw}"`
+        );
+        return MAX_LENGTH_M;
+    }
+
+    console.info(`[pricing] Парсинг длины: "${raw}" → ${meters.toFixed(2)} м`);
+    return meters;
 }
 
 // Helper to parse overrides from text
@@ -73,38 +132,32 @@ export function calculatePrice(form: CalculationFormData): PriceResult {
 
     // ============================================
     // БАЗОВЫЕ СТАВКИ ДЛЯ ЧЁРНОГО МЕТАЛЛА (steel)
+    // ОТКАЛИБРОВАНЫ ПОД РЕАЛИСТИЧНЫЕ ЦЕНЫ
     // ============================================
 
     // Ставки за погонный метр сварки (₽/м)
-    const baseWeldRatePerMeter = 800;        // стыковые, тавровые швы
-    const baseBackWeldRate = 600;            // обратная сторона шва
+    // Снижены для достижения целевых цен:
+    // Кейс 1: черный металл, стык, до 3мм, 16.3м → 120 000 – 180 000 ₽
+    // Кейс 2: латунь, те же параметры → 200 000 – 280 000 ₽
+    const baseWeldRatePerMeter = 500;        // стыковые, тавровые швы (было 800)
+    const baseBackWeldRate = 350;            // обратная сторона шва (было 600)
 
     // Ставки за зачистку и подготовку (₽/м)
-    const baseCleanupRatePerMeter = 300;
+    const baseCleanupRatePerMeter = 200;     // (было 300)
 
     // Ставки за финишную обработку (₽/м²)
     const baseSatinRatePerM2 = 500;          // сатинирование
     const basePaintRatePerM2 = 400;          // покраска
     const baseVarnishRatePerM2 = 300;        // лак
 
+
     // ============================================
     // РАСЧЁТ ОБЪЁМОВ РАБОТ
     // ============================================
 
-    // Извлекаем длину шва из объёма (например, "8 м" или "8")
-    let weldLengthM = 0;
-    const volumeMatch = form.volume.match(/(\d+(\.\d+)?)/);
-    if (volumeMatch) {
-        const length = parseFloat(volumeMatch[1]);
-        if (!Number.isNaN(length) && length > 0) {
-            weldLengthM = length;
-        }
-    }
+    // Используем новый парсер длины с учётом единиц измерения
+    const weldLengthM = parseLengthToMeters(form.volume || '1');
 
-    // Для примера, если не указано — берём минимум
-    if (weldLengthM === 0) {
-        weldLengthM = 1; // 1 метр по умолчанию
-    }
 
     // Длина обратной стороны (если требуется)
     const backWeldLengthM = form.weldType === 'butt' ? weldLengthM : 0;
@@ -200,11 +253,92 @@ export function calculatePrice(form: CalculationFormData): PriceResult {
     // ============================================
 
     // Даём вилку ±10%
-    const totalMin = Math.round(subtotal * 0.9);
-    const totalMax = Math.round(subtotal * 1.1);
+    let totalMin = Math.round(subtotal * 0.9);
+    let totalMax = Math.round(subtotal * 1.1);
+
+    // ============================================
+    // SANITY-CHECK: защита от аномальных цен
+    // ============================================
+    // Если цена космическая при небольшой длине, вероятно ошибка парсинга или коэффициенты
+    const SANITY_MAX_PRICE = 1_500_000; // 1.5 млн ₽
+    const SANITY_MAX_LENGTH = 50; // 50 м
+
+    if (totalMax > SANITY_MAX_PRICE && weldLengthM < SANITY_MAX_LENGTH) {
+        console.warn(
+            `[pricing] ⚠️ SANITY-CHECK: Цена ${totalMax.toLocaleString('ru-RU')} ₽ слишком высока ` +
+            `для ${weldLengthM.toFixed(2)} м шва! ` +
+            `Возможно, ошибка парсинга или некорректные коэффициенты. ` +
+            `Ограничиваем до ${SANITY_MAX_PRICE.toLocaleString('ru-RU')} ₽.`
+        );
+        totalMax = SANITY_MAX_PRICE;
+        totalMin = Math.round(totalMax * 0.7); // минимум = 70% от макс
+    }
 
     const baseMin = totalMin;
     const baseMax = totalMax;
 
+    console.info(
+        `[pricing] Итоговая цена: ${totalMin.toLocaleString('ru-RU')} – ${totalMax.toLocaleString('ru-RU')} ₽ ` +
+        `(длина: ${weldLengthM.toFixed(2)} м, материал: ${material})`
+    );
+
     return { baseMin, baseMax, totalMin, totalMax };
+}
+
+/**
+ * Тестовая функция для проверки калькулятора на эталонных кейсах
+ * Запусти её в консоли браузера для быстрой проверки
+ */
+export function debugSampleCalculations() {
+    console.log('='.repeat(60));
+    console.log('🧪 ТЕСТ ЦЕНОВОГО КАЛЬКУЛЯТОРА');
+    console.log('='.repeat(60));
+
+    // Кейс 1: Черный металл, стыковой, до 3 мм, 16.3 м (1630 см)
+    const case1: CalculationFormData = {
+        photos: [],
+        description: 'Тестовый расчёт',
+        typeOfWork: 'welding',
+        material: 'steel',
+        thickness: 'lt_3',
+        weldType: 'butt',
+        volume: '1630 см', // или '16.3 м' или '16300 мм'
+        position: 'flat',
+        conditions: ['indoor'],
+        materialOwner: 'client',
+        deadline: 'normal',
+        extraServices: [],
+    };
+
+    const result1 = calculatePrice(case1);
+    console.log('\n📋 КЕЙС 1: Черный металл');
+    console.log('Параметры: сталь, стыковой, до 3мм, 16.3м, нижнее, в помещении, обычный срок');
+    console.log(`Ожидаем: 120 000 – 180 000 ₽`);
+    console.log(`Получили: ${result1.totalMin.toLocaleString('ru-RU')} – ${result1.totalMax.toLocaleString('ru-RU')} ₽`);
+    console.log(`✅ В коридоре: ${result1.totalMin >= 100_000 && result1.totalMax <= 200_000 ? 'ДА' : 'НЕТ'}`);
+
+    // Кейс 2: Латунь, те же параметры
+    const case2: CalculationFormData = {
+        ...case1,
+        material: 'brass',
+    };
+
+    const result2 = calculatePrice(case2);
+    console.log('\n📋 КЕЙС 2: Латунь');
+    console.log('Параметры: латунь, стыковой, до 3мм, 16.3м, нижнее, в помещении, обычный срок');
+    console.log(`Ожидаем: 200 000 – 280 000 ₽`);
+    console.log(`Получили: ${result2.totalMin.toLocaleString('ru-RU')} – ${result2.totalMax.toLocaleString('ru-RU')} ₽`);
+    console.log(`✅ В коридоре: ${result2.totalMin >= 180_000 && result2.totalMax <= 300_000 ? 'ДА' : 'НЕТ'}`);
+
+    // Проверка парсинга единиц
+    console.log('\n📏 ПРОВЕРКА ПАРСИНГА ЕДИНИЦ:');
+    console.log(`"1630 см" → ${parseLengthToMeters('1630 см').toFixed(2)} м`);
+    console.log(`"16.3 м" → ${parseLengthToMeters('16.3 м').toFixed(2)} м`);
+    console.log(`"16300 мм" → ${parseLengthToMeters('16300 мм').toFixed(2)} м`);
+    console.log(`"10 метров" → ${parseLengthToMeters('10 метров').toFixed(2)} м`);
+    console.log(`"5000 см" → ${parseLengthToMeters('5000 см').toFixed(2)} м (защита: макс 200м)`);
+
+    console.log('\n' + '='.repeat(60));
+    console.log('✅ Тест завершён');
+    console.log('='.repeat(60));
 }

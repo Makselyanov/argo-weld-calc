@@ -112,8 +112,11 @@ export default function NewCalculation() {
     setPriceCalculationMethod(null);
     setAiComment(null);
 
+    // Сначала вычисляем базовый диапазон локальным калькулятором
+    const localResult = calculatePrice(formData);
+
     try {
-      // Пытаемся получить расчёт от AI
+      // Пытаемся получить расчёт от AI, передавая базовый диапазон
       const { data, error } = await supabase.functions.invoke('ai-price-estimate', {
         body: {
           description: formData.description,
@@ -123,16 +126,27 @@ export default function NewCalculation() {
           material: formData.material,
           thickness: formData.thickness,
           seamType: formData.weldType,
+          volume: formData.volume,
           position: formData.position,
           conditions: formData.conditions,
           deadline: formData.deadline,
+          materialOwner: formData.materialOwner,
           extraServices: formData.extraServices,
-          photos: formData.photos // DataURL или ссылки на фото
+          photos: formData.photos, // DataURL или ссылки на фото
+          // Передаём базовый диапазон от локального калькулятора
+          localMin: localResult.totalMin,
+          localMax: localResult.totalMax
         }
       });
 
-      if (error || !data || typeof data.totalMin !== 'number' || typeof data.totalMax !== 'number') {
-        throw new Error('AI calculation failed');
+      // Проверяем, не вернулся ли fallback
+      if (error || !data || data.useFallback) {
+        throw new Error('AI calculation failed or returned fallback');
+      }
+
+      // Проверяем валидность данных от AI
+      if (typeof data.totalMin !== 'number' || typeof data.totalMax !== 'number') {
+        throw new Error('Invalid AI response data');
       }
 
       // Успешный расчёт через AI
@@ -140,20 +154,24 @@ export default function NewCalculation() {
         baseMin: data.totalMin,
         baseMax: data.totalMax,
         totalMin: data.totalMin,
-        totalMax: data.totalMax
+        totalMax: data.totalMax,
+        reasonShort: data.reasonShort,
+        reasonLong: data.reasonLong,
+        warnings: data.warnings || []
       });
       setPriceCalculationMethod('ai');
-      setAiComment(data.comment || null);
+      setAiComment(data.reasonShort || null);
     } catch (err) {
       // Fallback на локальный калькулятор
       console.warn('AI расчёт не удался, используем локальный калькулятор:', err);
-      const result = calculatePrice(formData);
-      setPriceResult(result);
+      setPriceResult(localResult);
       setPriceCalculationMethod('fallback');
+      setAiComment('ИИ-расчёт временно недоступен, показана базовая стоимость по тарифам.');
     } finally {
       setIsCalculatingPrice(false);
     }
   };
+
 
   const handleBack = () => {
     if (step === 1) {
@@ -467,11 +485,51 @@ export default function NewCalculation() {
                 </div>
               )}
 
-              {/* Комментарий от AI */}
+              {/* Короткое объяснение */}
               {aiComment && (
                 <p className="text-sm text-muted-foreground italic mt-2">
                   💬 {aiComment}
                 </p>
+              )}
+
+              {/* Раскрывающийся блок "Почему такая цена" */}
+              {priceResult.reasonShort && priceResult.reasonLong && (
+                <details className="mt-4 text-left bg-muted/10 rounded-lg p-4">
+                  <summary className="cursor-pointer text-sm font-semibold text-foreground hover:text-accent transition-colors">
+                    💡 Почему такая цена? (раскрыть детали)
+                  </summary>
+                  <div className="mt-3 text-sm text-muted-foreground space-y-2 whitespace-pre-line">
+                    {priceResult.reasonLong}
+                  </div>
+                  {priceResult.reasonLong && (
+                    <button
+                      onClick={() => {
+                        const kpText = `Коммерческое предложение по сварочным работам\n\n` +
+                          `Стоимость: ${priceResult.totalMin.toLocaleString()} – ${priceResult.totalMax.toLocaleString()} ₽\n\n` +
+                          `${priceResult.reasonLong}`;
+                        navigator.clipboard.writeText(kpText);
+                        alert('Коммерческое предложение скопировано в буфер обмена!');
+                      }}
+                      className="mt-3 w-full glass-button py-2 px-4 text-sm hover:bg-accent/20 transition-colors"
+                    >
+                      📋 Скопировать КП
+                    </button>
+                  )}
+                </details>
+              )}
+
+              {/* Предупреждения от AI */}
+              {priceResult.warnings && priceResult.warnings.length > 0 && (
+                <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-left">
+                  <p className="text-xs font-semibold text-yellow-600 dark:text-yellow-400 mb-2">
+                    ⚠️ Внимание:
+                  </p>
+                  <ul className="text-xs text-yellow-700 dark:text-yellow-300 space-y-1 list-disc list-inside">
+                    {priceResult.warnings.map((warning, idx) => (
+                      <li key={idx}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </div>
 
