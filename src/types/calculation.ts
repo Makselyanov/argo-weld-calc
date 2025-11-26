@@ -1,13 +1,29 @@
 export type TypeOfWork = 'welding' | 'cutting' | 'overlay' | 'grinding' | 'complex';
 
 export type Material =
-  | 'black_metal'
-  | 'stainless'
-  | 'aluminium'
-  | 'cast_iron'
-  | 'copper'
-  | 'brass'
-  | 'titanium';
+  | 'steel'        // черный металл
+  | 'stainless'    // нержавейка
+  | 'aluminium'    // алюминий
+  | 'cast_iron'    // чугун
+  | 'copper'       // медь
+  | 'brass'        // латунь
+  | 'titanium';    // титан
+
+/**
+ * Коэффициенты стоимости для разных материалов по типам операций
+ * weld - сварка (включая обратную сторону)
+ * prep - зачистка, подготовка
+ * finish - сатинирование, покраска, лак
+ */
+export const MATERIAL_COEFF = {
+  steel: { weld: 1.0, prep: 1.0, finish: 1.0 },
+  stainless: { weld: 1.4, prep: 1.3, finish: 1.2 },
+  aluminium: { weld: 1.5, prep: 1.3, finish: 1.1 },
+  cast_iron: { weld: 1.8, prep: 1.6, finish: 1.1 },
+  copper: { weld: 1.7, prep: 1.4, finish: 1.2 },
+  brass: { weld: 1.4, prep: 1.2, finish: 1.1 },
+  titanium: { weld: 2.2, prep: 1.7, finish: 1.3 },
+} as const;
 
 export type Thickness =
   | 'lt_3'

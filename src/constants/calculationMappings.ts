@@ -19,7 +19,7 @@ export const WORK_TYPES: { value: TypeOfWork; label: string }[] = [
 ];
 
 export const MATERIALS: { value: Material; label: string }[] = [
-    { value: 'black_metal', label: 'Черный металл' },
+    { value: 'steel', label: 'Черный металл' },
     { value: 'stainless', label: 'Нержавейка' },
     { value: 'aluminium', label: 'Алюминий' },
     { value: 'cast_iron', label: 'Чугун' },

@@ -10,13 +10,13 @@ This migration guide describes the necessary database changes to support the ext
 The `material` column should be of type `TEXT` or `VARCHAR` to accept all new material values.
 
 #### New Material Values:
-- `black_metal` (was `steel`)
-- `stainless`
-- `aluminium`
-- `cast_iron`
-- `copper` (new)
-- `brass` (new)
-- `titanium` (new)
+- `steel` (Черный металл)
+- `stainless` (Нержавейка)
+- `aluminium` (Алюминий)
+- `cast_iron` (Чугун)
+- `copper` (new - Медь)
+- `brass` (new - Латунь)
+- `titanium` (new - Титан)
 
 #### Migration Steps:
 
@@ -39,13 +39,6 @@ ALTER TABLE calculations DROP CONSTRAINT IF EXISTS calculations_material_check;
 ALTER TYPE material_enum ADD VALUE IF NOT EXISTS 'copper';
 ALTER TYPE material_enum ADD VALUE IF NOT EXISTS 'brass';
 ALTER TYPE material_enum ADD VALUE IF NOT EXISTS 'titanium';
-
--- Rename old value (if ENUM is used and 'steel' needs to be renamed to 'black_metal')
--- Note: PostgreSQL doesn't support renaming enum values directly
--- You would need to:
--- 1. Create new enum with all values
--- 2. Alter column to use new enum
--- 3. Drop old enum
 ```
 
 **Option 3: Change column type to TEXT (recommended)**
@@ -55,14 +48,14 @@ ALTER TABLE calculations
 ALTER COLUMN material TYPE TEXT;
 ```
 
-#### Update Existing Data (if renaming steel to black_metal):
+#### Update Existing Data (if needed):
 ```sql
--- Update existing records that use 'steel' to 'black_metal'
+-- Update existing records that use 'other' to null or 'steel'
 UPDATE calculations 
-SET material = 'black_metal' 
-WHERE material = 'steel';
+SET material = 'steel' 
+WHERE material = 'other';
 
--- Update existing records that use 'other' to null or a specific value
+-- Or set to NULL if preferred
 -- UPDATE calculations 
 -- SET material = NULL 
 -- WHERE material = 'other';
@@ -79,13 +72,8 @@ After migration, verify:
 
 If needed to rollback:
 ```sql
--- Rename back
+-- Remove new materials (set to NULL or 'steel')
 UPDATE calculations 
 SET material = 'steel' 
-WHERE material = 'black_metal';
-
--- Remove new materials (set to NULL or 'other')
-UPDATE calculations 
-SET material = NULL 
 WHERE material IN ('copper', 'brass', 'titanium');
 ```
