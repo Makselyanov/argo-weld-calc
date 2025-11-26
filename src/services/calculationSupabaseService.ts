@@ -35,7 +35,7 @@ export async function saveCalculation(form: CalculationFormData, price: PriceRes
         const { data, error } = await supabase
             .from('calculations')
             .insert({
-                description: form.description,
+                description: `${form.description}\n\n[Уточнения по материалам]: ${form.descriptionStep2 || 'нет'}\n\n[Комментарий к заказу]: ${form.descriptionStep3 || 'нет'}`,
                 photos: form.photos, // jsonb
                 type_of_work: form.typeOfWork,
                 material: form.material,

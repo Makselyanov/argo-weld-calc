@@ -25,6 +25,22 @@ export const MATERIAL_COEFF = {
   titanium: { weld: 2.2, prep: 1.7, finish: 1.3 },
 } as const;
 
+export const THICKNESS_COEFF = {
+  "lt_3": 1.0,       // до 3 мм (было 0-3) - используем ключи из типа Thickness
+  "mm_3_6": 1.1,     // 3-6 мм
+  "mm_6_12": 1.25,   // 6-12 мм
+  "gt_12": 1.5,      // 12+ мм
+  "unknown": 1.1     // среднее значение
+} as const;
+
+export const SEAM_TYPE_COEFF = {
+  butt: 1.0,         // стыковой
+  corner: 1.15,      // угловой (используем corner вместо fillet, так как в типах corner)
+  tee: 1.15,         // тавровый (используем tee вместо fillet)
+  lap: 1.1,          // нахлёст (используем lap вместо overlap)
+  pipe: 1.25,        // труба-труба
+} as const;
+
 export type Thickness =
   | 'lt_3'
   | 'mm_3_6'
@@ -64,7 +80,9 @@ export type ExtraService =
 
 export interface CalculationFormData {
   photos: string[];        // пока просто dataURL превью
-  description: string;
+  description: string;     // описание с шага 1
+  descriptionStep2?: string; // уточнения с шага 2
+  descriptionStep3?: string; // уточнения с шага 3
   typeOfWork: TypeOfWork | null;
   material: Material | null;
   thickness: Thickness | null;

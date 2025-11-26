@@ -1,5 +1,5 @@
 import type { CalculationFormData } from '@/types/calculation';
-import { MATERIAL_COEFF } from '@/types/calculation';
+import { MATERIAL_COEFF, THICKNESS_COEFF, SEAM_TYPE_COEFF } from '@/types/calculation';
 
 export interface PriceResult {
     baseMin: number;
@@ -10,14 +10,25 @@ export interface PriceResult {
 
 export function calculatePrice(form: CalculationFormData): PriceResult {
     /**
-     * Новая система расчёта с коэффициентами материалов
+     * Новая система расчёта с коэффициентами материалов, толщины и типа шва
      * Базовые цены указаны для чёрного металла (steel)
-     * Для других материалов применяются коэффициенты из MATERIAL_COEFF
      */
 
-    // Получаем коэффициенты материала
+    // 1. Коэффициенты материала
     const material = form.material ?? 'steel';
     const m = MATERIAL_COEFF[material];
+
+    // 2. Коэффициенты толщины
+    const thickness = form.thickness ?? 'unknown';
+    // Если толщина не выбрана или unknown, берем 1.1 (как в константе unknown)
+    const tCoeff = THICKNESS_COEFF[thickness] ?? 1.1;
+
+    // 3. Коэффициенты типа шва
+    const weldType = form.weldType ?? 'butt';
+    // Если тип не выбран, считаем как стыковой (1.0)
+    // В SEAM_TYPE_COEFF ключи: butt, corner, tee, lap, pipe
+    // В WeldType: butt, corner, tee, lap, pipe. Совпадают.
+    const sCoeff = SEAM_TYPE_COEFF[weldType] ?? 1.0;
 
     // ============================================
     // БАЗОВЫЕ СТАВКИ ДЛЯ ЧЁРНОГО МЕТАЛЛА (steel)
@@ -55,11 +66,9 @@ export function calculatePrice(form: CalculationFormData): PriceResult {
     }
 
     // Длина обратной стороны (если требуется)
-    // Упрощённо: обратная сторона нужна для стыковых швов
     const backWeldLengthM = form.weldType === 'butt' ? weldLengthM : 0;
 
     // Площадь для финишной обработки (м²)
-    // Упрощённо: считаем как ширина полосы * длина
     const stripWidthM = 0.1; // 10 см полоса вдоль шва
     const areaM2 = weldLengthM * stripWidthM;
 
@@ -71,32 +80,38 @@ export function calculatePrice(form: CalculationFormData): PriceResult {
     const backWeldBase = backWeldLengthM * baseBackWeldRate;
     const cleanupBase = weldLengthM * baseCleanupRatePerMeter;
 
-    // Финишная обработка зависит от требований
+    // Финишная обработка
     let satinBase = 0;
     let paintBase = 0;
     let varnishBase = 0;
 
-    // Упрощённо: если есть экстра-услуги, добавляем финиш
-    // В реальности это должно быть отдельное поле в форме
     if (form.extraServices.length > 0) {
         satinBase = areaM2 * baseSatinRatePerM2;
     }
 
     // ============================================
-    // ПРИМЕНЕНИЕ КОЭФФИЦИЕНТОВ МАТЕРИАЛА
+    // ПРИМЕНЕНИЕ ВСЕХ КОЭФФИЦИЕНТОВ
+    // Formula: Base * Material * Thickness * SeamType
     // ============================================
 
-    const weldCost = (weldBase + backWeldBase) * m.weld;
-    const prepCost = cleanupBase * m.prep;
-    const finishCost = (satinBase + paintBase + varnishBase) * m.finish;
+    // Сварка
+    const weldCost = (weldBase + backWeldBase) * m.weld * tCoeff * sCoeff;
+
+    // Подготовка (зачистка)
+    const prepCost = cleanupBase * m.prep * tCoeff * sCoeff;
+
+    // Финиш (сатинирование, покраска)
+    // Применяем все коэффициенты, как запрошено в задании (п. 1.1)
+    const finishCost = (satinBase + paintBase + varnishBase) * m.finish * tCoeff * sCoeff;
 
     // ============================================
-    // ДОПОЛНИТЕЛЬНЫЕ МОДИФИКАТОРЫ
+    // ДОПОЛНИТЕЛЬНЫЕ МОДИФИКАТОРЫ (Положение, Условия, Срочность)
     // ============================================
 
     let subtotal = weldCost + prepCost + finishCost;
 
-    // Учитываем тип работ
+    // Учитываем тип работ (доп. наценка к базе)
+    // Можно переделать в коэффициент, но оставим как фиксированную добавку к сложности
     switch (form.typeOfWork) {
         case 'cutting':
             subtotal += 2000;
@@ -110,15 +125,6 @@ export function calculatePrice(form: CalculationFormData): PriceResult {
         case 'grinding':
             subtotal += 1500;
             break;
-    }
-
-    // Толщина материала
-    if (form.thickness === 'mm_6_12') {
-        subtotal *= 1.2;
-    } else if (form.thickness === 'gt_12') {
-        subtotal *= 1.5;
-    } else if (form.thickness === 'lt_3') {
-        subtotal *= 0.9;
     }
 
     // Положение сварки

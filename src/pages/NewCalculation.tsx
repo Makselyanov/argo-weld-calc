@@ -37,6 +37,8 @@ export default function NewCalculation() {
   const [formData, setFormData] = useState<CalculationFormData>({
     photos: [],
     description: '',
+    descriptionStep2: '',
+    descriptionStep3: '',
     typeOfWork: null,
     material: null,
     thickness: null,
@@ -115,6 +117,8 @@ export default function NewCalculation() {
       const { data, error } = await supabase.functions.invoke('ai-price-estimate', {
         body: {
           description: formData.description,
+          descriptionStep2: formData.descriptionStep2,
+          descriptionStep3: formData.descriptionStep3,
           typeOfWork: formData.typeOfWork,
           material: formData.material,
           thickness: formData.thickness,
@@ -400,6 +404,17 @@ export default function NewCalculation() {
                 </div>
               </div>
 
+              {/* Step 2 Description */}
+              <div>
+                <Label className="text-foreground mb-2 block">Уточнения по материалам и размерам</Label>
+                <Textarea
+                  value={formData.descriptionStep2 || ''}
+                  onChange={(e) => setFormData({ ...formData, descriptionStep2: e.target.value })}
+                  placeholder="Например: толщина точно 4 мм, труба диаметром 50 мм..."
+                  className="min-h-[80px] bg-input/50 border-border/50 text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
+
               {/* Summary */}
               <div className="glass-card p-4 bg-muted/10">
                 <p className="text-sm font-medium mb-2 text-foreground">Вы выбрали:</p>
@@ -473,6 +488,17 @@ export default function NewCalculation() {
                   </label>
                 ))}
               </div>
+            </div>
+
+            {/* Step 3 Description */}
+            <div>
+              <Label className="text-foreground mb-2 block">Комментарий к заказу (условия доступа и т.д.)</Label>
+              <Textarea
+                value={formData.descriptionStep3 || ''}
+                onChange={(e) => setFormData({ ...formData, descriptionStep3: e.target.value })}
+                placeholder="Например: работа на высоте 3 метра, нужен пропуск..."
+                className="min-h-[80px] bg-input/50 border-border/50 text-foreground placeholder:text-muted-foreground"
+              />
             </div>
 
             <div className="space-y-3">

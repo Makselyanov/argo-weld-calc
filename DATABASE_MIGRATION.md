@@ -77,3 +77,26 @@ UPDATE calculations
 SET material = 'steel' 
 WHERE material IN ('copper', 'brass', 'titanium');
 ```
+
+## 4. Текстовые поля (Шаг 2 и 3)
+
+В приложение добавлены новые поля для ввода уточнений:
+- `descriptionStep2` (Уточнения по материалам)
+- `descriptionStep3` (Комментарий к заказу)
+
+**Миграция БД не требуется.**
+Эти поля автоматически объединяются с основным полем `description` при сохранении в базу данных в формате:
+```text
+[Основное описание]
+
+[Уточнения по материалам]: ...
+
+[Комментарий к заказу]: ...
+```
+
+Если в будущем потребуется хранить их в отдельных колонках, выполните:
+```sql
+ALTER TABLE calculations ADD COLUMN description_step2 TEXT;
+ALTER TABLE calculations ADD COLUMN description_step3 TEXT;
+```
+И обновите `src/services/calculationSupabaseService.ts` для использования этих колонок.
