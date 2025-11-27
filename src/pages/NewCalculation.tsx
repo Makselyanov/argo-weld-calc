@@ -30,18 +30,29 @@ import {
 } from '@/constants/calculationMappings';
 import { saveCalculation } from '@/services/calculationSupabaseService';
 import { supabase } from '@/lib/supabaseClient';
+import { useToast } from '@/hooks/use-toast';
 
-// Копмонент для копирования КП
+// Компонент для копирования КП
 function CopyProposalButton({ proposalText }: { proposalText: string }) {
   const [copied, setCopied] = useState(false);
+  const { toast } = useToast();
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(proposalText);
       setCopied(true);
+      toast({
+        title: "КП скопировано",
+        description: "Текст коммерческого предложения скопирован. Можете вставить его в мессенджер или письмо клиенту.",
+      });
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Ошибка копирования:', err);
+      toast({
+        title: "Ошибка",
+        description: "Не удалось скопировать текст. Попробуйте ещё раз.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -54,7 +65,6 @@ function CopyProposalButton({ proposalText }: { proposalText: string }) {
     </button>
   );
 }
-
 
 export default function NewCalculation() {
   const navigate = useNavigate();
@@ -556,17 +566,17 @@ export default function NewCalculation() {
                 </p>
               )}
 
-              {/* Раскрывающийся блок "Коммерческое предложение" */}
+              {/* Блок "Коммерческое предложение" */}
               {priceResult.reasonLong && priceCalculationMethod === 'ai' && (
-                <details className="mt-4 text-left bg-muted/10 rounded-lg p-4">
-                  <summary className="cursor-pointer text-sm font-semibold text-foreground hover:text-accent transition-colors">
-                    Коммерческое предложение (раскрыть)
-                  </summary>
-                  <div className="mt-3 text-sm text-muted-foreground space-y-2 whitespace-pre-line">
+                <div className="mt-4 text-left bg-muted/10 rounded-lg p-4">
+                  <h3 className="text-sm font-semibold text-foreground mb-3">
+                    Коммерческое предложение
+                  </h3>
+                  <div className="text-sm text-muted-foreground whitespace-pre-line leading-relaxed">
                     {priceResult.reasonLong}
                   </div>
                   <CopyProposalButton proposalText={priceResult.reasonLong} />
-                </details>
+                </div>
               )}
 
               {/* Предупреждения от AI */}
