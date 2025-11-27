@@ -8,11 +8,14 @@ serve(async (req) => {
         // Проверяем наличие API ключа
         if (!OPENROUTER_API_KEY) {
             console.error("Missing OPENROUTER_API_KEY");
-            // Возвращаем корректный fallback-ответ вместо ошибки
             return new Response(
                 JSON.stringify({
-                    useFallback: true,
-                    reason: "API key not configured"
+                    aiMin: null,
+                    aiMax: null,
+                    aiFailed: true,
+                    reasonShort: 'API ключ не настроен',
+                    reasonLong: 'Сервер не смог подключиться к ИИ. Показана базовая стоимость по внутреннему калькулятору.',
+                    warnings: []
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } }
             );
@@ -20,18 +23,22 @@ serve(async (req) => {
 
         // Безопасное чтение входящего запроса
         let data;
+        let rawBody = '';
         try {
-            data = await req.json();
+            rawBody = await req.text();
+            console.log('Raw request body (first 1000 chars):', rawBody.slice(0, 1000));
+            data = JSON.parse(rawBody);
         } catch (err) {
             console.error('Failed to parse request JSON in ai-price-estimate:', err);
+            console.error('Raw body (first 1000 chars):', rawBody.slice(0, 1000));
             return new Response(
                 JSON.stringify({
-                    aiFailed: true,
-                    reasonShort: 'Некорректный формат данных для ИИ',
-                    reasonLong: 'Сервер не смог прочитать данные расчёта. Показана базовая стоимость по внутреннему калькулятору.',
-                    warnings: ['Служебное сообщение: не удалось разобрать JSON в Edge-функции.'],
                     aiMin: null,
                     aiMax: null,
+                    aiFailed: true,
+                    reasonShort: 'Ошибка разбора запроса',
+                    reasonLong: 'Сервер не смог прочитать данные расчёта. Показана базовая стоимость по внутреннему калькулятору.',
+                    warnings: []
                 }),
                 { headers: { 'Content-Type': 'application/json' }, status: 200 }
             );
@@ -232,11 +239,14 @@ serve(async (req) => {
         } catch (fetchError) {
             clearTimeout(timeoutId);
             console.error("OpenRouter fetch error:", fetchError);
-            // Возвращаем fallback вместо ошибки
             return new Response(
                 JSON.stringify({
-                    useFallback: true,
-                    reason: "OpenRouter timeout or network error"
+                    aiMin: null,
+                    aiMax: null,
+                    aiFailed: true,
+                    reasonShort: 'Ошибка подключения к ИИ',
+                    reasonLong: 'Сервер не смог подключиться к ИИ. Показана базовая стоимость по внутреннему калькулятору.',
+                    warnings: []
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } }
             );
@@ -247,11 +257,14 @@ serve(async (req) => {
         if (!response.ok) {
             const errorData = await response.text();
             console.error("OpenRouter API error:", errorData);
-            // Возвращаем fallback вместо ошибки
             return new Response(
                 JSON.stringify({
-                    useFallback: true,
-                    reason: "OpenRouter API error"
+                    aiMin: null,
+                    aiMax: null,
+                    aiFailed: true,
+                    reasonShort: 'Ошибка API ИИ',
+                    reasonLong: 'Сервер не смог получить ответ от ИИ. Показана базовая стоимость по внутреннему калькулятору.',
+                    warnings: []
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } }
             );
@@ -286,8 +299,12 @@ serve(async (req) => {
             console.error("No content in AI response");
             return new Response(
                 JSON.stringify({
-                    useFallback: true,
-                    reason: "Empty AI response"
+                    aiMin: null,
+                    aiMax: null,
+                    aiFailed: true,
+                    reasonShort: 'Пустой ответ от ИИ',
+                    reasonLong: 'ИИ вернул пустой ответ. Показана базовая стоимость по внутреннему калькулятору.',
+                    warnings: []
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } }
             );
@@ -307,8 +324,12 @@ serve(async (req) => {
             console.error("Failed to parse AI response:", content);
             return new Response(
                 JSON.stringify({
-                    useFallback: true,
-                    reason: "Failed to parse AI JSON"
+                    aiMin: null,
+                    aiMax: null,
+                    aiFailed: true,
+                    reasonShort: 'Ошибка парсинга ответа ИИ',
+                    reasonLong: 'ИИ вернул некорректный формат данных. Показана базовая стоимость по внутреннему калькулятору.',
+                    warnings: []
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } }
             );
@@ -328,8 +349,12 @@ serve(async (req) => {
             console.error("Invalid AI result structure:", aiResult);
             return new Response(
                 JSON.stringify({
-                    useFallback: true,
-                    reason: "Invalid AI response structure"
+                    aiMin: null,
+                    aiMax: null,
+                    aiFailed: true,
+                    reasonShort: 'Некорректная структура ответа ИИ',
+                    reasonLong: 'ИИ вернул данные в неожиданном формате. Показана базовая стоимость по внутреннему калькулятору.',
+                    warnings: []
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } }
             );
@@ -350,11 +375,14 @@ serve(async (req) => {
 
     } catch (err) {
         console.error("Error in ai-price-estimate:", err);
-        // Возвращаем fallback вместо ошибки
         return new Response(
             JSON.stringify({
-                useFallback: true,
-                reason: "Internal server error"
+                aiMin: null,
+                aiMax: null,
+                aiFailed: true,
+                reasonShort: 'Внутренняя ошибка сервера',
+                reasonLong: 'Произошла непредвиденная ошибка. Показана базовая стоимость по внутреннему калькулятору.',
+                warnings: []
             }),
             { status: 200, headers: { "Content-Type": "application/json" } }
         );
