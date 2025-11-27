@@ -206,7 +206,7 @@ serve(async (req) => {
                     "X-Title": "ARGO Weld Calculator",
                 },
                 body: JSON.stringify({
-                    model: OPENROUTER_MODEL,
+                    model: "openai/gpt-4o-mini", // Жёстко указываем модель
                     messages: [
                         { role: "system", content: systemPrompt },
                         { role: "user", content: userContent },
@@ -224,7 +224,7 @@ serve(async (req) => {
                 aiMax: null,
                 aiFailed: true,
                 reasonShort: "Ошибка подключения к ИИ",
-                reasonLong: "Сервер не смог подключиться к ИИ. Показана базовая стоимость по внутреннему калькулятору.",
+                reasonLong: `Не удалось подключиться к API OpenRouter. Возможные причины: таймаут сети, недоступность сервера. Показана базовая стоимость по внутреннему калькулятору. Техническая информация: ${fetchError}`,
                 warnings: ["Расчёт выполнен без участия ИИ, только по базовым тарифам."],
             };
             return new Response(JSON.stringify(errorResponse), {
@@ -236,14 +236,23 @@ serve(async (req) => {
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-            const errorText = await response.text();
-            console.error("OpenRouter API error:", response.status, errorText);
+            // Пытаемся получить максимум информации об ошибке
+            let errorDetails = "";
+            try {
+                const errorJson = await response.json();
+                errorDetails = JSON.stringify(errorJson, null, 2);
+                console.error("OpenRouter API error (JSON):", response.status, errorJson);
+            } catch {
+                errorDetails = await response.text();
+                console.error("OpenRouter API error (text):", response.status, errorDetails);
+            }
+
             const errorResponse: AiResponse = {
                 aiMin: null,
                 aiMax: null,
                 aiFailed: true,
                 reasonShort: "Ошибка API ИИ",
-                reasonLong: "Сервер не смог получить ответ от ИИ. Показана базовая стоимость по внутреннему калькулятору.",
+                reasonLong: `OpenRouter API вернул ошибку (HTTP ${response.status}). Возможные причины: неверный API-ключ, превышен лимит запросов, временная недоступность модели. Показана базовая стоимость по внутреннему калькулятору.`,
                 warnings: ["Расчёт выполнен без участия ИИ, только по базовым тарифам."],
             };
             return new Response(JSON.stringify(errorResponse), {
