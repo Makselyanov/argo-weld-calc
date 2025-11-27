@@ -173,10 +173,11 @@ export default function NewCalculation() {
       // Validate required fields
       if (formData.typeOfWork && formData.material && formData.thickness && formData.weldType) {
         await calculatePriceWithAI();
-        setStep(3);
+        // setStep(3) теперь вызывается внутри calculatePriceWithAI в finally
       }
     }
   };
+
 
 
   // Функция расчёта цены с использованием AI и fallback
@@ -271,8 +272,9 @@ export default function NewCalculation() {
       setAiComment('ИИ-расчёт временно недоступен, показана базовая стоимость по тарифам.');
       setAiResult(null);
     } finally {
-      // ГАРАНТИРОВАННО убираем индикатор загрузки
+      // ГАРАНТИРОВАННО убираем индикатор загрузки и переходим на шаг 3
       setIsCalculatingPrice(false);
+      setStep(3);
     }
   };
 
