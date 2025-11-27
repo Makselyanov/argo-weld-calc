@@ -7,6 +7,13 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { ArrowLeft } from 'lucide-react';
 
 import {
@@ -33,7 +40,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 
 // Компонент для копирования КП
-function CopyProposalButton({ proposalText }: { proposalText: string }) {
+function CopyProposalButton({ proposalText, className }: { proposalText: string; className?: string }) {
   const [copied, setCopied] = useState(false);
   const { toast } = useToast();
 
@@ -59,7 +66,7 @@ function CopyProposalButton({ proposalText }: { proposalText: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="mt-3 w-full glass-button py-2 px-4 text-sm hover:bg-accent/20 transition-colors"
+      className={`glass-button py-2 px-4 text-sm hover:bg-accent/20 transition-colors ${className || ''}`}
     >
       {copied ? 'Скопировано!' : 'Скопировать КП'}
     </button>
@@ -566,19 +573,6 @@ export default function NewCalculation() {
                 </p>
               )}
 
-              {/* Блок "Коммерческое предложение" */}
-              {priceResult.reasonLong && priceCalculationMethod === 'ai' && (
-                <div className="mt-4 text-left bg-muted/10 rounded-lg p-4">
-                  <h3 className="text-sm font-semibold text-foreground mb-3">
-                    Коммерческое предложение
-                  </h3>
-                  <div className="text-sm text-muted-foreground whitespace-pre-line leading-relaxed">
-                    {priceResult.reasonLong}
-                  </div>
-                  <CopyProposalButton proposalText={priceResult.reasonLong} />
-                </div>
-              )}
-
               {/* Предупреждения от AI */}
               {priceResult.warnings && priceResult.warnings.length > 0 && (
                 <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-left">
@@ -593,6 +587,28 @@ export default function NewCalculation() {
                 </div>
               )}
             </div>
+
+            {/* Коммерческое предложение (AI) */}
+            {priceResult.reasonLong && priceCalculationMethod === 'ai' && (
+              <Card className="mt-6 bg-slate-900/60 border-slate-800">
+                <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                  <div className="space-y-1">
+                    <CardTitle className="text-xl text-foreground">Коммерческое предложение</CardTitle>
+                    <CardDescription className="text-slate-400">
+                      Сформировано искусственным интеллектом по вашим исходным данным
+                    </CardDescription>
+                  </div>
+                  <div className="shrink-0 ml-4">
+                    <CopyProposalButton proposalText={priceResult.reasonLong} />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="whitespace-pre-line text-sm leading-relaxed text-slate-100">
+                    {priceResult.reasonLong}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
 
             <div>
               <h3 className="text-lg font-semibold mb-4 text-foreground">Дополнительные услуги</h3>
