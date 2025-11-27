@@ -249,8 +249,9 @@ serve(async (req) => {
                             content: prompt
                         }
                     ],
+                    response_format: { type: "json_object" },
                     temperature: 0.3,
-                    max_tokens: 2500 // увеличено для полноценного КП (600-1200 символов)
+                    max_tokens: 2500 // увеличено для полноценного КП (800-1200 символов)
                 }),
                 signal: controller.signal
             });
@@ -328,18 +329,17 @@ serve(async (req) => {
             );
         }
 
+        // Логируем сырой ответ ИИ
+        console.log('AI raw response content:', content);
+
         // Парсим JSON из ответа AI
         let aiResult;
         try {
-            // Пытаемся извлечь JSON из ответа (на случай если AI добавил текст до/после)
-            const jsonMatch = content.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                aiResult = JSON.parse(jsonMatch[0]);
-            } else {
-                aiResult = JSON.parse(content);
-            }
+            aiResult = JSON.parse(content);
+            console.log('AI parsed result:', JSON.stringify(aiResult));
         } catch (parseError) {
-            console.error("Failed to parse AI response:", content);
+            console.error("Failed to parse AI response:", parseError);
+            console.error("AI raw content:", content);
             return new Response(
                 JSON.stringify({
                     aiMin: null,
