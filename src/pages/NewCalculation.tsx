@@ -503,13 +503,26 @@ export default function NewCalculation() {
 
               {/* Step 2 Description */}
               <div>
-                <Label className="text-foreground mb-2 block">Уточнения по материалам и размерам</Label>
-                <Textarea
-                  value={formData.descriptionStep2 || ''}
-                  onChange={(e) => setFormData({ ...formData, descriptionStep2: e.target.value })}
-                  placeholder="Например: толщина точно 4 мм, труба диаметром 50 мм..."
-                  className="min-h-[80px] bg-input/50 border-border/50 text-foreground placeholder:text-muted-foreground"
-                />
+                {(() => {
+                  const isContractorMaterial = formData.materialOwner === 'contractor';
+                  const materialClarificationsLabel = isContractorMaterial
+                    ? 'Уточнения по материалам и размерам, что купить'
+                    : 'Уточнения по материалам и размерам';
+
+                  return (
+                    <>
+                      <Label className={`mb-2 block ${isContractorMaterial ? 'text-amber-400 font-semibold' : 'text-foreground'}`}>
+                        {materialClarificationsLabel}
+                      </Label>
+                      <Textarea
+                        value={formData.descriptionStep2 || ''}
+                        onChange={(e) => setFormData({ ...formData, descriptionStep2: e.target.value })}
+                        placeholder="Например: толщина точно 4 мм, труба диаметром 50 мм..."
+                        className="min-h-[80px] bg-input/50 border-border/50 text-foreground placeholder:text-muted-foreground"
+                      />
+                    </>
+                  );
+                })()}
               </div>
 
               {/* Summary */}
