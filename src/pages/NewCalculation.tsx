@@ -124,7 +124,7 @@ export default function NewCalculation() {
         descriptionStep2: formData.descriptionStep2,
         descriptionStep3: formData.descriptionStep3,
         typeOfWork: formData.typeOfWork,
-        workScope: formData.workScope, // режим работы с заготовкой
+        workScope: formData.workScope,
         material: formData.material,
         thickness: formData.thickness,
         seamType: formData.weldType,
@@ -134,8 +134,7 @@ export default function NewCalculation() {
         deadline: formData.deadline,
         materialOwner: formData.materialOwner,
         extraServices: formData.extraServices,
-        photos: formData.photos, // DataURL или ссылки на фото
-        // Передаём базовый диапазон от локального калькулятора
+        photos: formData.photos,
         localMin: localResult.totalMin,
         localMax: localResult.totalMax
       };
