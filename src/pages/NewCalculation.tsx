@@ -118,46 +118,54 @@ export default function NewCalculation() {
     const localResult = calculatePrice(formData);
 
     try {
-      // Пытаемся получить расчёт от AI, передавая базовый диапазон
+      // Формируем payload для AI
+      const payload = {
+        description: formData.description,
+        descriptionStep2: formData.descriptionStep2,
+        descriptionStep3: formData.descriptionStep3,
+        typeOfWork: formData.typeOfWork,
+        workScope: formData.workScope, // режим работы с заготовкой
+        material: formData.material,
+        thickness: formData.thickness,
+        seamType: formData.weldType,
+        volume: formData.volume,
+        position: formData.position,
+        conditions: formData.conditions,
+        deadline: formData.deadline,
+        materialOwner: formData.materialOwner,
+        extraServices: formData.extraServices,
+        photos: formData.photos, // DataURL или ссылки на фото
+        // Передаём базовый диапазон от локального калькулятора
+        localMin: localResult.totalMin,
+        localMax: localResult.totalMax
+      };
+
+      // Логируем payload для отладки
+      console.log('AI payload:', payload);
+
+      // Пытаемся получить расчёт от AI
       const { data, error } = await supabase.functions.invoke('ai-price-estimate', {
-        body: {
-          description: formData.description,
-          descriptionStep2: formData.descriptionStep2,
-          descriptionStep3: formData.descriptionStep3,
-          typeOfWork: formData.typeOfWork,
-          workScope: formData.workScope, // режим работы с заготовкой
-          material: formData.material,
-          thickness: formData.thickness,
-          seamType: formData.weldType,
-          volume: formData.volume,
-          position: formData.position,
-          conditions: formData.conditions,
-          deadline: formData.deadline,
-          materialOwner: formData.materialOwner,
-          extraServices: formData.extraServices,
-          photos: formData.photos, // DataURL или ссылки на фото
-          // Передаём базовый диапазон от локального калькулятора
-          localMin: localResult.totalMin,
-          localMax: localResult.totalMax
-        }
+        body: payload
       });
 
-      // Проверяем, не вернулся ли fallback
-      if (error || !data || data.useFallback) {
+      console.log('AI response:', data, 'error:', error);
+
+      // Проверяем, не вернулся ли fallback или ошибка
+      if (error || !data || data.useFallback || data.aiFailed) {
         throw new Error('AI calculation failed or returned fallback');
       }
 
-      // Проверяем валидность данных от AI
-      if (typeof data.totalMin !== 'number' || typeof data.totalMax !== 'number') {
+      // Проверяем валидность данных от AI (новый формат: aiMin/aiMax)
+      if (typeof data.aiMin !== 'number' || typeof data.aiMax !== 'number') {
         throw new Error('Invalid AI response data');
       }
 
       // Успешный расчёт через AI
       setPriceResult({
-        baseMin: data.totalMin,
-        baseMax: data.totalMax,
-        totalMin: data.totalMin,
-        totalMax: data.totalMax,
+        baseMin: localResult.totalMin,  // базовый диапазон от локального калькулятора
+        baseMax: localResult.totalMax,
+        totalMin: data.aiMin,            // AI-диапазон (финальная цена)
+        totalMax: data.aiMax,
         reasonShort: data.reasonShort,
         reasonLong: data.reasonLong,
         warnings: data.warnings || []
@@ -499,10 +507,18 @@ export default function NewCalculation() {
 
               {/* Информация о методе расчёта */}
               {priceCalculationMethod === 'ai' && (
-                <div className="text-xs text-green-500 flex items-center justify-center gap-2">
-                  <span>🤖</span>
-                  <span>Расчёт выполнен искусственным интеллектом</span>
-                </div>
+                <>
+                  <div className="text-xs text-green-500 flex items-center justify-center gap-2">
+                    <span>🤖</span>
+                    <span>Расчёт выполнен искусственным интеллектом</span>
+                  </div>
+                  {/* Показываем базовый диапазон, если AI скорректировал цену */}
+                  {(priceResult.baseMin !== priceResult.totalMin || priceResult.baseMax !== priceResult.totalMax) && (
+                    <div className="text-xs text-muted-foreground">
+                      Базовый диапазон по тарифам: {priceResult.baseMin.toLocaleString()} – {priceResult.baseMax.toLocaleString()} ₽
+                    </div>
+                  )}
+                </>
               )}
               {priceCalculationMethod === 'fallback' && (
                 <div className="text-xs text-yellow-500">

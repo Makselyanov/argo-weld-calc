@@ -18,7 +18,24 @@ serve(async (req) => {
             );
         }
 
-        const data = await req.json();
+        // Безопасное чтение входящего запроса
+        let data;
+        try {
+            data = await req.json();
+        } catch (err) {
+            console.error('Failed to parse request JSON in ai-price-estimate:', err);
+            return new Response(
+                JSON.stringify({
+                    aiFailed: true,
+                    reasonShort: 'Некорректный формат данных для ИИ',
+                    reasonLong: 'Сервер не смог прочитать данные расчёта. Показана базовая стоимость по внутреннему калькулятору.',
+                    warnings: ['Служебное сообщение: не удалось разобрать JSON в Edge-функции.'],
+                    aiMin: null,
+                    aiMax: null,
+                }),
+                { headers: { 'Content-Type': 'application/json' }, status: 200 }
+            );
+        }
 
         // Формируем промт для AI с жёсткими правилами
         const prompt = `Ты опытный мастер-сварщик с 20-летним стажем работы в России. 
@@ -240,7 +257,29 @@ serve(async (req) => {
             );
         }
 
-        const aiResponse = await response.json();
+        // Безопасное чтение ответа от OpenRouter
+        const raw = await response.text();
+        console.log('OpenRouter raw response (first 1000 chars):', raw.slice(0, 1000));
+
+        let aiResponse: any;
+        try {
+            aiResponse = JSON.parse(raw);
+        } catch (err) {
+            console.error('Failed to parse OpenRouter JSON in ai-price-estimate:', err);
+            console.error('Raw response:', raw);
+            return new Response(
+                JSON.stringify({
+                    aiFailed: true,
+                    reasonShort: 'Ошибка разбора ответа ИИ',
+                    reasonLong: 'Сервер не смог прочитать данные расчёта. Показана базовая стоимость по внутреннему калькулятору.',
+                    warnings: ['Служебное сообщение: не удалось разобрать JSON в Edge-функции.'],
+                    aiMin: null,
+                    aiMax: null,
+                }),
+                { headers: { 'Content-Type': 'application/json' }, status: 200 }
+            );
+        }
+
         const content = aiResponse.choices?.[0]?.message?.content;
 
         if (!content) {
@@ -299,11 +338,12 @@ serve(async (req) => {
         // Возвращаем успешный результат от AI
         return new Response(
             JSON.stringify({
-                totalMin: Math.round(aiResult.price_range.min),
-                totalMax: Math.round(aiResult.price_range.max),
+                aiMin: Math.round(aiResult.price_range.min),
+                aiMax: Math.round(aiResult.price_range.max),
                 reasonShort: aiResult.reason_short,
                 reasonLong: aiResult.reason_long,
-                warnings: aiResult.warnings || []
+                warnings: aiResult.warnings || [],
+                aiFailed: false
             }),
             { status: 200, headers: { "Content-Type": "application/json" } }
         );
