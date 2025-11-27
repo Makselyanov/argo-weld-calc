@@ -178,6 +178,7 @@ export default function NewCalculation() {
     }
   };
 
+
   // Функция расчёта цены с использованием AI и fallback
   const calculatePriceWithAI = async () => {
     setIsCalculatingPrice(true);
@@ -227,14 +228,25 @@ export default function NewCalculation() {
 
       console.log('AI response:', data, 'error:', error);
 
-      // Проверяем, не вернулся ли fallback или ошибка
-      if (error || !data || data.aiFailed) {
-        throw new Error('AI calculation failed or returned fallback');
+      // Если произошла ошибка сети или вообще нет ответа
+      if (error || !data) {
+        throw new Error(`Network error: ${error?.message || 'No response from server'}`);
       }
 
-      // Проверяем валидность данных от AI (новый формат: aiMin/aiMax)
-      if (typeof data.aiMin !== 'number' || typeof data.aiMax !== 'number') {
-        throw new Error('Invalid AI response data');
+      // Если edge-функция вернула aiFailed: true (это нормальный ответ, не ошибка!)
+      if (data.aiFailed === true) {
+        console.warn('AI calculation returned aiFailed=true, using local calculator');
+        setPriceResult(localResult);
+        setPriceCalculationMethod('fallback');
+        setAiComment(data.reasonShort || 'ИИ-расчёт временно недоступен, показана базовая стоимость по тарифам.');
+        setAiResult(null);
+        return; // Выход из try, перейдём в finally
+      }
+
+      // Проверяем валидность данных от AI (успешный расчёт)
+      if (typeof data.aiMin !== 'number' || typeof data.aiMax !== 'number' || data.aiMin <= 0 || data.aiMax <= 0) {
+        console.error('Invalid AI response data:', data);
+        throw new Error('Invalid AI price data');
       }
 
       // Успешный расчёт через AI
@@ -250,14 +262,16 @@ export default function NewCalculation() {
       setPriceCalculationMethod('ai');
       setAiComment(data.reasonShort || null);
       setAiResult(data);
+
     } catch (err) {
-      // Fallback на локальный калькулятор
-      console.warn('AI расчёт не удался, используем локальный калькулятор:', err);
+      // Fallback на локальный калькулятор (при любых необработанных ошибках)
+      console.error('AI расчёт не удался, используем локальный калькулятор:', err);
       setPriceResult(localResult);
       setPriceCalculationMethod('fallback');
       setAiComment('ИИ-расчёт временно недоступен, показана базовая стоимость по тарифам.');
       setAiResult(null);
     } finally {
+      // ГАРАНТИРОВАННО убираем индикатор загрузки
       setIsCalculatingPrice(false);
     }
   };
