@@ -101,6 +101,9 @@ export default function NewCalculation() {
   const [isCalculatingPrice, setIsCalculatingPrice] = useState(false);
   const [priceCalculationMethod, setPriceCalculationMethod] = useState<'ai' | 'fallback' | null>(null);
   const [aiComment, setAiComment] = useState<string | null>(null);
+  const [aiResult, setAiResult] = useState<{ reasonLong?: string } | null>(null);
+
+  const hasAiProposal = !!aiResult?.reasonLong?.trim();
 
   // Recalculate price when extra services change in step 3
   useEffect(() => {
@@ -155,6 +158,7 @@ export default function NewCalculation() {
     setIsCalculatingPrice(true);
     setPriceCalculationMethod(null);
     setAiComment(null);
+    setAiResult(null);
 
     // Сначала вычисляем базовый диапазон локальным калькулятором
     const localResult = calculatePrice(formData);
@@ -213,12 +217,14 @@ export default function NewCalculation() {
       });
       setPriceCalculationMethod('ai');
       setAiComment(data.reasonShort || null);
+      setAiResult(data);
     } catch (err) {
       // Fallback на локальный калькулятор
       console.warn('AI расчёт не удался, используем локальный калькулятор:', err);
       setPriceResult(localResult);
       setPriceCalculationMethod('fallback');
       setAiComment('ИИ-расчёт временно недоступен, показана базовая стоимость по тарифам.');
+      setAiResult(null);
     } finally {
       setIsCalculatingPrice(false);
     }
@@ -589,23 +595,23 @@ export default function NewCalculation() {
             </div>
 
             {/* Коммерческое предложение (AI) */}
-            {priceCalculationMethod === 'ai' && priceResult?.reasonLong && (
+            {hasAiProposal && (
               <Card className="mt-6 bg-slate-900/60 border-slate-800">
                 <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                   <div className="space-y-1">
                     <CardTitle className="text-xl text-foreground">Коммерческое предложение</CardTitle>
                     <CardDescription className="text-slate-400">
-                      Сформировано искусственным интеллектом по вашим исходным данным
+                      Текст ниже можно целиком скопировать и отправить клиенту
                     </CardDescription>
                   </div>
                   <div className="shrink-0 ml-4">
-                    <CopyProposalButton text={priceResult.reasonLong} />
+                    <CopyProposalButton text={aiResult!.reasonLong!} />
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <p className="whitespace-pre-line text-sm leading-relaxed text-slate-100">
-                    {priceResult.reasonLong}
-                  </p>
+                  <pre className="whitespace-pre-line text-sm text-slate-100 font-sans">
+                    {aiResult!.reasonLong}
+                  </pre>
                 </CardContent>
               </Card>
             )}
