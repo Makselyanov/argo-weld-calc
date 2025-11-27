@@ -3,7 +3,17 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY");
 const OPENROUTER_MODEL = Deno.env.get("OPENROUTER_MODEL") || "openai/gpt-4o-mini";
 
+const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
 serve(async (req) => {
+    if (req.method === 'OPTIONS') {
+        return new Response('ok', { headers: corsHeaders });
+    }
+
     try {
         // Проверяем наличие API ключа
         if (!OPENROUTER_API_KEY) {
@@ -17,7 +27,7 @@ serve(async (req) => {
                     reasonLong: 'Сервер не смог подключиться к ИИ. Показана базовая стоимость по внутреннему калькулятору.',
                     warnings: []
                 }),
-                { status: 200, headers: { "Content-Type": "application/json" } }
+                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
@@ -40,7 +50,7 @@ serve(async (req) => {
                     reasonLong: 'Сервер не смог прочитать данные расчёта. Показана базовая стоимость по внутреннему калькулятору.',
                     warnings: []
                 }),
-                { headers: { 'Content-Type': 'application/json' }, status: 200 }
+                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
@@ -178,24 +188,45 @@ serve(async (req) => {
 - Без пафоса и маркетингового бреда
 - Объясни ключевые факторы цены
 
-**reason_long (готовое КП от лица сварщика):**
-- Деловой, спокойный стиль
-- Объясни, из чего складывается цена:
-  * материал, длина, толщина
-  * положение шва, условия доступа
-  * сроки выполнения
-- Аккуратно объясни риски «сделать дешевле»:
-  * качество швов
-  * отсутствие контроля
-  * риск переделок
-  * отсутствие гарантии
-- Покажи выгоды работы с исполнителем:
-  * качество швов
-  * соблюдение ГОСТ/ТУ
-  * при необходимости НК-контроль и акты
-  * аккуратность работы
-- ❌ Без фраз типа "лучший в мире", "гарантированно"
-- ✅ Честно, профессионально, с уважением к клиенту
+**reason_long (готовое коммерческое предложение для копирования клиенту):**
+- Объём: 600–1200 символов
+- БЕЗ эмодзи, БЕЗ обращения по имени, ТОЛЬКО факты и спокойная аргументация
+- Структура КП СТРОГО в следующем порядке:
+
+1. ВСТУПЛЕНИЕ (1-2 предложен
+
+ия):
+   «Здравствуйте! Отправляю ориентировочный расчёт по вашему заказу по сварочным работам.»
+
+2. ИСХОДНЫЕ ДАННЫЕ (2-3 предложения):
+   Кратко опиши конструкцию и объём работ из полей: description, typeOfWork, material, seamType, volume, workScope.
+   Формат: «Исходные данные: [описание]. Материал – [material], тип шва – [seamType], объём работ – [volume или краткое из description].»
+
+3. СТОИМОСТЬ (2-3 предложения):
+   «Ориентировочная стоимость работ: от [price_range.min] до [price_range.max] ₽.»
+   Объясни разброс: зависит от точных размеров, доступа к месту работ, необходимости дополнительных операций.
+
+4. ЧТО ВХОДИТ В РАБОТЫ (список, 4-6 пунктов):
+   Адаптируй под typeOfWork и workScope:
+   - Разметка и подготовка по чертежу/месту
+   - Резка заготовок и подготовка кромок (если workScope = from_scratch или rework)
+   - Сборка конструкции в размер
+   - Сварка с соблюдением технологии
+   - Контроль качества швов, зачистка по необходимости
+   - (Если подходит) Испытания/опрессовка/проверка герметичности
+
+5. ЗАЩИТА ОТ ДЕШЁВЫХ ПОДРЯДЧИКОВ (3-4 предложения):
+   Объясни, почему цена именно такая:
+   - Это работа с нуля/ремонт (в зависимости от workScope), а не просто «схватить шов»
+   - Риски дешёвой работы: деформация, протечки, переделка, простой, нарушение требований безопасности
+   - Выгода клиента: «делаем один раз и надолго», соблюдение ГОСТ/технических требований (БЕЗ указания конкретных номеров ГОСТов)
+
+6. УСЛОВИЯ (1-2 предложения):
+   «Расчёт предварительный. Окончательная цена фиксируется после выезда на объект / получения детальных чертежей / фото.
+   Сроки и точную стоимость уточним после согласования всех деталей.»
+
+7. ПРИЗЫВ К ДЕЙСТВИЮ (1 предложение):
+   «Если вас устраивает указанный диапазон цен, можем перейти к согласованию деталей и подготовке точного коммерческого предложения.»
 
 **warnings:**
 - Используй, если:
@@ -232,7 +263,7 @@ serve(async (req) => {
                         }
                     ],
                     temperature: 0.3,
-                    max_tokens: 1500 // увеличили для reason_long
+                    max_tokens: 2500 // увеличено для полноценного КП (600-1200 символов)
                 }),
                 signal: controller.signal
             });
@@ -248,7 +279,7 @@ serve(async (req) => {
                     reasonLong: 'Сервер не смог подключиться к ИИ. Показана базовая стоимость по внутреннему калькулятору.',
                     warnings: []
                 }),
-                { status: 200, headers: { "Content-Type": "application/json" } }
+                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
@@ -266,7 +297,7 @@ serve(async (req) => {
                     reasonLong: 'Сервер не смог получить ответ от ИИ. Показана базовая стоимость по внутреннему калькулятору.',
                     warnings: []
                 }),
-                { status: 200, headers: { "Content-Type": "application/json" } }
+                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
@@ -289,7 +320,7 @@ serve(async (req) => {
                     aiMin: null,
                     aiMax: null,
                 }),
-                { headers: { 'Content-Type': 'application/json' }, status: 200 }
+                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
@@ -306,7 +337,7 @@ serve(async (req) => {
                     reasonLong: 'ИИ вернул пустой ответ. Показана базовая стоимость по внутреннему калькулятору.',
                     warnings: []
                 }),
-                { status: 200, headers: { "Content-Type": "application/json" } }
+                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
@@ -331,7 +362,7 @@ serve(async (req) => {
                     reasonLong: 'ИИ вернул некорректный формат данных. Показана базовая стоимость по внутреннему калькулятору.',
                     warnings: []
                 }),
-                { status: 200, headers: { "Content-Type": "application/json" } }
+                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
@@ -356,7 +387,7 @@ serve(async (req) => {
                     reasonLong: 'ИИ вернул данные в неожиданном формате. Показана базовая стоимость по внутреннему калькулятору.',
                     warnings: []
                 }),
-                { status: 200, headers: { "Content-Type": "application/json" } }
+                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
@@ -370,7 +401,7 @@ serve(async (req) => {
                 warnings: aiResult.warnings || [],
                 aiFailed: false
             }),
-            { status: 200, headers: { "Content-Type": "application/json" } }
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
 
     } catch (err) {
@@ -384,7 +415,7 @@ serve(async (req) => {
                 reasonLong: 'Произошла непредвиденная ошибка. Показана базовая стоимость по внутреннему калькулятору.',
                 warnings: []
             }),
-            { status: 200, headers: { "Content-Type": "application/json" } }
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
     }
 });

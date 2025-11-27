@@ -31,6 +31,31 @@ import {
 import { saveCalculation } from '@/services/calculationSupabaseService';
 import { supabase } from '@/lib/supabaseClient';
 
+// Копмонент для копирования КП
+function CopyProposalButton({ proposalText }: { proposalText: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(proposalText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Ошибка копирования:', err);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="mt-3 w-full glass-button py-2 px-4 text-sm hover:bg-accent/20 transition-colors"
+    >
+      {copied ? 'Скопировано!' : 'Скопировать КП'}
+    </button>
+  );
+}
+
+
 export default function NewCalculation() {
   const navigate = useNavigate();
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -508,7 +533,6 @@ export default function NewCalculation() {
               {priceCalculationMethod === 'ai' && (
                 <>
                   <div className="text-xs text-green-500 flex items-center justify-center gap-2">
-                    <span>🤖</span>
                     <span>Расчёт выполнен искусственным интеллектом</span>
                   </div>
                   {/* Показываем базовый диапазон, если AI скорректировал цену */}
@@ -521,40 +545,27 @@ export default function NewCalculation() {
               )}
               {priceCalculationMethod === 'fallback' && (
                 <div className="text-xs text-yellow-500">
-                  ⚠️ Не удалось рассчитать через нейросеть, использован базовый калькулятор
+                  Не удалось рассчитать через нейросеть, использован базовый калькулятор
                 </div>
               )}
 
               {/* Короткое объяснение */}
               {aiComment && (
                 <p className="text-sm text-muted-foreground italic mt-2">
-                  💬 {aiComment}
+                  {aiComment}
                 </p>
               )}
 
-              {/* Раскрывающийся блок "Почему такая цена" */}
-              {priceResult.reasonShort && priceResult.reasonLong && (
+              {/* Раскрывающийся блок "Коммерческое предложение" */}
+              {priceResult.reasonLong && priceCalculationMethod === 'ai' && (
                 <details className="mt-4 text-left bg-muted/10 rounded-lg p-4">
                   <summary className="cursor-pointer text-sm font-semibold text-foreground hover:text-accent transition-colors">
-                    💡 Почему такая цена? (раскрыть детали)
+                    Коммерческое предложение (раскрыть)
                   </summary>
                   <div className="mt-3 text-sm text-muted-foreground space-y-2 whitespace-pre-line">
                     {priceResult.reasonLong}
                   </div>
-                  {priceResult.reasonLong && (
-                    <button
-                      onClick={() => {
-                        const kpText = `Коммерческое предложение по сварочным работам\n\n` +
-                          `Стоимость: ${priceResult.totalMin.toLocaleString()} – ${priceResult.totalMax.toLocaleString()} ₽\n\n` +
-                          `${priceResult.reasonLong}`;
-                        navigator.clipboard.writeText(kpText);
-                        alert('Коммерческое предложение скопировано в буфер обмена!');
-                      }}
-                      className="mt-3 w-full glass-button py-2 px-4 text-sm hover:bg-accent/20 transition-colors"
-                    >
-                      📋 Скопировать КП
-                    </button>
-                  )}
+                  <CopyProposalButton proposalText={priceResult.reasonLong} />
                 </details>
               )}
 
