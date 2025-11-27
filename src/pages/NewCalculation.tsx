@@ -75,6 +75,7 @@ function CopyProposalButton({ text, className }: { text: string; className?: str
 
 export default function NewCalculation() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
   const [formData, setFormData] = useState<CalculationFormData>({
@@ -102,6 +103,7 @@ export default function NewCalculation() {
   const [priceCalculationMethod, setPriceCalculationMethod] = useState<'ai' | 'fallback' | null>(null);
   const [aiComment, setAiComment] = useState<string | null>(null);
   const [aiResult, setAiResult] = useState<{ reasonLong?: string } | null>(null);
+  const [photoMetadata, setPhotoMetadata] = useState<{ name: string }[]>([]);
 
   const hasAiProposal = !!aiResult?.reasonLong?.trim();
 
@@ -117,21 +119,44 @@ export default function NewCalculation() {
     const files = e.target.files;
     if (files && files.length > 0) {
       const newPhotos: string[] = [];
+      const newMetadata: { name: string }[] = [];
       const fileList = Array.from(files);
+      let hasPdf = false;
+
+      // Фильтруем PDF
+      const imageFiles = fileList.filter(file => {
+        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+          hasPdf = true;
+          return false;
+        }
+        return true;
+      });
+
+      if (hasPdf) {
+        toast({
+          title: "PDF пока не поддерживается",
+          description: "Загрузка PDF-файлов пока в разработке. Сделайте скриншоты страниц проекта и загрузите их как изображения (JPG/PNG), чтобы нейросеть могла проанализировать чертеж.",
+          variant: "default",
+        });
+      }
+
+      if (imageFiles.length === 0) return;
 
       let processedCount = 0;
-      fileList.forEach(file => {
+      imageFiles.forEach(file => {
         const reader = new FileReader();
         reader.onloadend = () => {
           if (typeof reader.result === 'string') {
             newPhotos.push(reader.result);
+            newMetadata.push({ name: file.name });
           }
           processedCount++;
-          if (processedCount === fileList.length) {
+          if (processedCount === imageFiles.length) {
             setFormData(prev => ({
               ...prev,
               photos: [...prev.photos, ...newPhotos]
             }));
+            setPhotoMetadata(prev => [...prev, ...newMetadata]);
           }
         };
         reader.readAsDataURL(file);
@@ -164,6 +189,13 @@ export default function NewCalculation() {
     const localResult = calculatePrice(formData);
 
     try {
+      // Формируем attachments
+      const attachments = formData.photos.map((url, index) => ({
+        type: "image",
+        url: url,
+        name: photoMetadata[index]?.name || `image_${index}.jpg`,
+      }));
+
       // Формируем payload для AI
       const payload = {
         description: formData.description,
@@ -180,7 +212,7 @@ export default function NewCalculation() {
         deadline: formData.deadline,
         materialOwner: formData.materialOwner,
         extraServices: formData.extraServices,
-        photos: formData.photos,
+        attachments: attachments,
         localMin: localResult.totalMin,
         localMax: localResult.totalMax
       };
@@ -196,7 +228,7 @@ export default function NewCalculation() {
       console.log('AI response:', data, 'error:', error);
 
       // Проверяем, не вернулся ли fallback или ошибка
-      if (error || !data || data.useFallback || data.aiFailed) {
+      if (error || !data || data.aiFailed) {
         throw new Error('AI calculation failed or returned fallback');
       }
 
