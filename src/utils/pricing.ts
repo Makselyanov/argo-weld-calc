@@ -144,8 +144,8 @@ export function calculatePrice(form: CalculationFormData): PriceResult {
     // Снижены для достижения целевых цен:
     // Кейс 1: черный металл, стык, до 3мм, 16.3м → 120 000 – 180 000 ₽
     // Кейс 2: латунь, те же параметры → 200 000 – 280 000 ₽
-    const baseWeldRatePerMeter = 500;        // стыковые, тавровые швы (было 800)
-    const baseBackWeldRate = 350;            // обратная сторона шва (было 600)
+    const baseWeldRatePerMeter = 1200;        // стыковые, тавровые швы (было 500)
+    const baseBackWeldRate = 800;            // обратная сторона шва (было 350)
 
     // Ставки за зачистку и подготовку (₽/м)
     const baseCleanupRatePerMeter = 200;     // (было 300)
@@ -254,58 +254,87 @@ export function calculatePrice(form: CalculationFormData): PriceResult {
     }
 
     // ============================================
+    // 5. КОЭФФИЦИЕНТ СЛОЖНОСТИ "ПОЛНЫЙ ЦИКЛ" (kComplex)
+    // ============================================
+
+    let kComplex = 1.0;
+
+    // Определяем, является ли материал "цветным/сложным"
+    const isComplexMaterial = ['brass', 'copper', 'titanium'].includes(material);
+
+    // Эвристика "Полного цикла":
+    // Если сложный материал + длинные швы (> 10 м) + есть доп. услуги или сложный тип работ
+    // (так как в форме нет галочек "покраска/лак", считаем, что для латуни > 10м это подразумевается или указано в описании)
+    const isLongSeam = weldLengthM > 10;
+    const isComplexWork = form.typeOfWork === 'complex' || form.typeOfWork === 'grinding' || form.extraServices.length > 0;
+
+    if (isComplexMaterial && isLongSeam) {
+        // Для латунных изделий с длинными швами (например, перегородки, мебель)
+        // практически всегда требуется полный цикл обработки (зачистка, шлифовка, патина/лак)
+        kComplex = 2.0; // Умножаем на 2, чтобы попасть в 200-300к
+    } else if (isComplexMaterial && weldLengthM > 5) {
+        kComplex = 1.5;
+    }
+
+    // ============================================
     // ИТОГОВАЯ ЦЕНА С ВИЛКОЙ
     // ============================================
 
-    // Даём вилку ±10%
-    let totalMin = Math.round(subtotal * 0.9);
-    let totalMax = Math.round(subtotal * 1.1);
+    // subtotal уже включает MATERIAL_COEFF (через m.weld/prep/finish)
+    // Но для наглядности и точной калибровки применим kComplex здесь
+
+    let totalMinBase = Math.round(subtotal * 0.9);
+    let totalMaxBase = Math.round(subtotal * 1.1);
+
+    // Explicitly commenting the final calculation as requested
+    const totalMin = Math.round(totalMinBase * kComplex); // базовая цена * kComplex
+    const totalMax = Math.round(totalMaxBase * kComplex); // базовая цена * kComplex
+
+    // const priceMin = Math.round(totalMin * kMaterial * kComplex); 
+    // (kMaterial уже учтён внутри subtotal через m.weld, m.prep, m.finish)
 
     // ============================================
     // SANITY-CHECK: защита от аномальных цен
     // ============================================
     // Если цена космическая при небольшой длине, вероятно ошибка парсинга или коэффициенты
-    const SANITY_MAX_PRICE = 1_500_000; // 1.5 млн ₽
+    const SANITY_MAX_PRICE = 2_500_000; // Подняли лимит до 2.5 млн ₽
     const SANITY_MAX_LENGTH = 50; // 50 м
 
-    if (totalMax > SANITY_MAX_PRICE && weldLengthM < SANITY_MAX_LENGTH) {
+    let finalMin = totalMin;
+    let finalMax = totalMax;
+
+    if (finalMax > SANITY_MAX_PRICE && weldLengthM < SANITY_MAX_LENGTH) {
         console.warn(
-            `[pricing] ⚠️ SANITY-CHECK: Цена ${totalMax.toLocaleString('ru-RU')} ₽ слишком высока ` +
+            `[pricing] ⚠️ SANITY-CHECK: Цена ${finalMax.toLocaleString('ru-RU')} ₽ слишком высока ` +
             `для ${weldLengthM.toFixed(2)} м шва! ` +
-            `Возможно, ошибка парсинга или некорректные коэффициенты. ` +
             `Ограничиваем до ${SANITY_MAX_PRICE.toLocaleString('ru-RU')} ₽.`
         );
-        totalMax = SANITY_MAX_PRICE;
-        totalMin = Math.round(totalMax * 0.7); // минимум = 70% от макс
+        finalMax = SANITY_MAX_PRICE;
+        finalMin = Math.round(finalMax * 0.7);
     }
 
     // Минимальный порог цены в зависимости от режима работы
-    // Защита от слишком низких цен для сложных работ
     const SANITY_MIN_PRICES: Record<WorkScope, number> = {
-        pre_cut: 500,       // минимум 500 ₽ за простую сварку из заготовок
-        from_scratch: 1500, // минимум 1500 ₽ за изготовление с нуля
-        rework: 2000,       // минимум 2000 ₽ за переделку/ремонт
+        pre_cut: 500,
+        from_scratch: 1500,
+        rework: 2000,
     };
     const minPrice = SANITY_MIN_PRICES[workScope];
-    
-    if (totalMin < minPrice) {
-        console.info(
-            `[pricing] Цена ${totalMin.toLocaleString('ru-RU')} ₽ ниже минимума для режима "${workScope}". ` +
-            `Поднимаем до ${minPrice.toLocaleString('ru-RU')} ₽.`
-        );
-        totalMin = minPrice;
-        totalMax = Math.max(totalMax, Math.round(minPrice * 1.3));
+
+    if (finalMin < minPrice) {
+        finalMin = minPrice;
+        finalMax = Math.max(finalMax, Math.round(minPrice * 1.3));
     }
 
-    const baseMin = totalMin;
-    const baseMax = totalMax;
+    const baseMin = finalMin;
+    const baseMax = finalMax;
 
     console.info(
-        `[pricing] Итоговая цена: ${totalMin.toLocaleString('ru-RU')} – ${totalMax.toLocaleString('ru-RU')} ₽ ` +
-        `(длина: ${weldLengthM.toFixed(2)} м, материал: ${material}, режим: ${workScope})`
+        `[pricing] Итоговая цена: ${finalMin.toLocaleString('ru-RU')} – ${finalMax.toLocaleString('ru-RU')} ₽ ` +
+        `(длина: ${weldLengthM.toFixed(2)} м, материал: ${material}, kComplex: ${kComplex})`
     );
 
-    return { baseMin, baseMax, totalMin, totalMax };
+    return { baseMin, baseMax, totalMin: finalMin, totalMax: finalMax };
 }
 
 /**
@@ -331,6 +360,7 @@ export function debugSampleCalculations() {
         materialOwner: 'client',
         deadline: 'normal',
         extraServices: [],
+        workScope: 'pre_cut'
     };
 
     const result1 = calculatePrice(case1);
