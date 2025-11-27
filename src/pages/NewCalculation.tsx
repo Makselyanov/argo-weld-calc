@@ -40,13 +40,13 @@ import { supabase } from '@/lib/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 
 // Компонент для копирования КП
-function CopyProposalButton({ proposalText, className }: { proposalText: string; className?: string }) {
+function CopyProposalButton({ text, className }: { text: string; className?: string }) {
   const [copied, setCopied] = useState(false);
   const { toast } = useToast();
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(proposalText);
+      await navigator.clipboard.writeText(text);
       setCopied(true);
       toast({
         title: "КП скопировано",
@@ -589,7 +589,7 @@ export default function NewCalculation() {
             </div>
 
             {/* Коммерческое предложение (AI) */}
-            {priceResult.reasonLong && priceCalculationMethod === 'ai' && (
+            {priceCalculationMethod === 'ai' && priceResult?.reasonLong && (
               <Card className="mt-6 bg-slate-900/60 border-slate-800">
                 <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                   <div className="space-y-1">
@@ -599,7 +599,7 @@ export default function NewCalculation() {
                     </CardDescription>
                   </div>
                   <div className="shrink-0 ml-4">
-                    <CopyProposalButton proposalText={priceResult.reasonLong} />
+                    <CopyProposalButton text={priceResult.reasonLong} />
                   </div>
                 </CardHeader>
                 <CardContent>
