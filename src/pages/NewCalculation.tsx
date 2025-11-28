@@ -46,7 +46,9 @@ function CopyProposalButton({ text, className }: { text: string; className?: str
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(text);
+      // Добавляем заголовок перед текстом КП при копировании
+      const textToCopy = `Коммерческое предложение\n\n${text}`;
+      await navigator.clipboard.writeText(textToCopy);
       setCopied(true);
       toast({
         title: "КП скопировано",
