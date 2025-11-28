@@ -624,7 +624,7 @@ export default function NewCalculation() {
 
         {step === 3 && priceResult && (
           <GlassCard className="space-y-6">
-            <h2 className="text-2xl font-bold text-center">Оценка стоимости</h2>
+            <h2 className="text-2xl font-bold text-center">Оценка стоимости (DEBUG)</h2>
 
             <div className="glass-card p-6 bg-accent/10 border-accent/30 text-center space-y-3">
               <div className="text-4xl font-bold text-foreground mb-2">
