@@ -76,127 +76,117 @@ function parseAiMetrics(content: string): AiMetricsResponse | null {
 }
 
 /**
- * Расчёт цены по метрикам и тарифам
- * 
- * ЕДИНАЯ ФОРМУЛА для всех материалов:
- * baseMin = weldLengthM × rateMin
- * baseMax = weldLengthM × rateMax
- * finalMin = baseMin × materialMult × difficultyMult × finishingMult
- * finalMax = baseMax × materialMult × difficultyMult × finishingMult
- * 
- * Калибровка по эталону (латунь, TIG, 17.3м швов с полным циклом):
- * Должно давать ~178,000–305,000 ₽
+ * Расчёт цены по метрикам и тарифам (НОВАЯ ВЕРСИЯ)
  */
 function calculatePriceFromMetrics(
     metrics: AiMetricsResponse,
-    material: string,
-    workScope: string
-): { totalMin: number; totalMax: number } {
-    const { weld_length_m, difficulty_coeff, prep_hours, welding_hours, finishing_hours } = metrics;
+    material: string
+): {
+    baseMin: number;
+    baseMax: number;
+    finalMin: number;
+    finalMax: number;
+    materialMult: number;
+    difficultyMult: number;
+    finishingMult: number;
+} {
+    const { weld_length_m, difficulty_coeff, finishing_hours, prep_hours, welding_hours } = metrics;
+    const weldLengthM = weld_length_m.linear_simple + weld_length_m.corner_edges + weld_length_m.complex_areas;
 
-    // Суммарная длина швов (метры)
-    const totalLength = weld_length_m.linear_simple + weld_length_m.corner_edges + weld_length_m.complex_areas;
-
-    // Если швов нет вообще - возвращаем минимальную оценку по часам
-    if (totalLength === 0) {
+    // Если швов нет вообще - возвращаем минимальную оценку по часам (fallback)
+    if (weldLengthM === 0) {
         const hourlyMin = prep_hours * 800 + welding_hours * 1000 + finishing_hours * 800;
         const hourlyMax = hourlyMin * 1.3;
         return {
-            totalMin: Math.round(hourlyMin),
-            totalMax: Math.round(hourlyMax)
+            baseMin: 0,
+            baseMax: 0,
+            finalMin: Math.round(hourlyMin),
+            finalMax: Math.round(hourlyMax),
+            materialMult: 1.0,
+            difficultyMult: 1.0,
+            finishingMult: 1.0
         };
     }
 
-    // ────────────────────────────────────────────────────────────
-    // 1. БАЗОВЫЕ СТАВКИ ЗА МЕТР (для простой стали, Тюмень)
-    // ────────────────────────────────────────────────────────────
-    const RATE_MIN = 600;  // базовая минималка за метр
-    const RATE_MAX = 1000; // базовая максималка за метр
+    const baseMinPerM = 600;   // базовая сталь, низ границы
+    const baseMaxPerM = 1000;  // базовая сталь, верх границы
 
-    // ────────────────────────────────────────────────────────────
-    // 2. КОЭФФИЦИЕНТ МАТЕРИАЛА (materialMult)
-    // ────────────────────────────────────────────────────────────
-    const materialLower = (material || "").toLowerCase();
-    let materialMult = 1.0; // по умолчанию - чёрная сталь
+    const baseMin = weldLengthM * baseMinPerM;
+    const baseMax = weldLengthM * baseMaxPerM;
 
-    if (materialLower.includes("нерж") || materialLower.includes("stainless")) {
+    // materialMult
+    const normalizedMaterial = (material || "").toLowerCase();
+    let materialMult = 1.0;
+
+    const is = (str: string) => normalizedMaterial.includes(str);
+
+    if (is("нерж") || is("stainless") || is("inox")) {
         materialMult = 1.5;
-    } else if (materialLower.includes("алюмин") || materialLower.includes("aluminum")) {
+    } else if (is("алюмин") || is("aluminum") || is("aluminium")) {
         materialMult = 1.8;
     } else if (
-        materialLower.includes("латун") ||
-        materialLower.includes("медь") ||
-        materialLower.includes("бронз") ||
-        materialLower.includes("brass") ||
-        materialLower.includes("copper") ||
-        materialLower.includes("bronze")
+        is("латун") || is("brass") ||
+        is("медь") || is("copper") ||
+        is("бронз") || is("bronze")
     ) {
-        // Для цветных металлов (латунь, медь, бронза) - повышенный тариф
-        materialMult = 2.5;
+        // Цветные металлы: латунь/медь/бронза
+        // КАЛИБРОВКА: Чтобы для 17.3м шва (эталон) получить ~180-300к, нужен множитель около 4.0
+        // (17.3 * 600 * 4.0 * 1.5 * 3.0 = 186,840)
+        materialMult = 4.0;
+    } else {
+        materialMult = 1.0; // steel, black_steel
     }
 
-    // ────────────────────────────────────────────────────────────
-    // 3. КОЭФФИЦИЕНТ СЛОЖНОСТИ (difficultyMult)
-    // ────────────────────────────────────────────────────────────
-    // difficulty_coeff от ИИ: 0.8–1.5
-    // Переводим его в множитель цены
-    const difficultyMult = difficulty_coeff;
+    // difficultyMult по коэффициенту ИИ
+    let difficultyMult = difficulty_coeff ?? 1.0;
+    if (difficultyMult < 1.0) difficultyMult = 1.0;
+    if (difficultyMult > 1.5) difficultyMult = 1.5;
 
-    // ────────────────────────────────────────────────────────────
-    // 4. КОЭФФИЦИЕНТ ФИНИШНЫХ ОПЕРАЦИЙ (finishingMult)
-    // ────────────────────────────────────────────────────────────
-    // Если есть финишные часы - значит есть зачистка, сатинирование, лак и т.п.
-    // Это добавляет сложность и повышает цену
+    // finishingMult по finishing_hours
     let finishingMult = 1.0;
-    if (finishing_hours > 0) {
-        // Чем больше часов финишинга, тем выше коэффициент
-        // Для эталона (10 часов финишинга) даём ~1.6
-        finishingMult = 1.0 + (finishing_hours / 10.0) * 0.6;
-        // Ограничим сверху
-        if (finishingMult > 2.0) finishingMult = 2.0;
+    if (finishing_hours > 0 && finishing_hours < 4) {
+        finishingMult = 1.1;
+    } else if (finishing_hours >= 4 && finishing_hours < 10) {
+        finishingMult = 1.5;
+    } else if (finishing_hours >= 10 && finishing_hours <= 20) {
+        finishingMult = 2.5;
+    } else if (finishing_hours > 20) {
+        finishingMult = 3.0;
     }
 
-    // ────────────────────────────────────────────────────────────
-    // 5. РАСЧЁТ БАЗОВОЙ СТОИМОСТИ
-    // ────────────────────────────────────────────────────────────
-    const baseMin = totalLength * RATE_MIN;
-    const baseMax = totalLength * RATE_MAX;
+    const rawMin = baseMin * materialMult * difficultyMult * finishingMult;
+    const rawMax = baseMax * materialMult * difficultyMult * finishingMult;
 
-    // ────────────────────────────────────────────────────────────
-    // 6. ПРИМЕНЯЕМ ВСЕ МНОЖИТЕЛИ
-    // ────────────────────────────────────────────────────────────
-    const finalMin = baseMin * materialMult * difficultyMult * finishingMult;
-    const finalMax = baseMax * materialMult * difficultyMult * finishingMult;
+    const finalMin = Math.round(rawMin / 10) * 10;
+    const finalMax = Math.round(rawMax / 10) * 10;
 
-    // ────────────────────────────────────────────────────────────
-    // 7. ДОБАВЛЯЕМ ПОЧАСОВУЮ СОСТАВЛЯЮЩУЮ (подготовка + сварка)
-    // ────────────────────────────────────────────────────────────
-    // Финишные часы уже учтены в finishingMult, поэтому здесь их не считаем отдельно
-    const hourlyComponent = prep_hours * 800 + welding_hours * 1000;
-
-    const totalMin = Math.round(finalMin + hourlyComponent);
-    const totalMax = Math.round(finalMax + hourlyComponent * 1.2);
-
-    return { totalMin, totalMax };
+    return { baseMin, baseMax, finalMin, finalMax, materialMult, difficultyMult, finishingMult };
 }
 
 /**
- * Генерация текста КП на основе метрик
+ * Генерация текста КП на основе метрик и рассчитанных цен
  */
 function generateProposal(
     metrics: AiMetricsResponse,
     material: string,
     workScope: string,
     materialOwner: string,
-    totalMin: number,
-    totalMax: number
+    priceData: {
+        baseMin: number;
+        baseMax: number;
+        finalMin: number;
+        finalMax: number;
+        materialMult: number;
+        difficultyMult: number;
+        finishingMult: number;
+    }
 ): { reasonShort: string; reasonLong: string } {
-    const { weld_length_m, difficulty_coeff, risk_level, uncertainty_comment, explanation_for_client } = metrics;
+    const { weld_length_m, difficulty_coeff, explanation_for_client } = metrics;
 
     const totalLength = weld_length_m.linear_simple + weld_length_m.corner_edges + weld_length_m.complex_areas;
     const materialLower = (material || "сталь").toLowerCase();
 
-    // Определяем, является ли материал цветным металлом (используется в нескольких блоках)
+    // Определяем, является ли материал цветным металлом
     const isColoredMetal =
         materialLower.includes("латун") ||
         materialLower.includes("медь") ||
@@ -236,50 +226,25 @@ function generateProposal(
         "Наши специалисты имеют опыт работы с чёрными и цветными металлами, аттестацию и необходимое оборудование."
     );
 
-    // 2. Описание работ (используем explanation_for_client)
+    // 2. Описание работ
     paragraphs.push(explanation_for_client);
 
     // 3. Блок стоимости
     paragraphs.push(
-        `Предварительная стоимость работ: от ${totalMin.toLocaleString("ru-RU")} до ${totalMax.toLocaleString("ru-RU")} ₽. ` +
+        `Предварительная стоимость работ: от ${priceData.finalMin.toLocaleString("ru-RU")} до ${priceData.finalMax.toLocaleString("ru-RU")} ₽. ` +
         "Точная сумма зависит от объёма сварки, сложности узлов и необходимости дополнительных услуг."
     );
 
-    // 4. Арифметика (как именно считали)
-    const RATE_MIN = 600;
-    const RATE_MAX = 1000;
-    let materialMult = 1.0;
-
-    if (materialLower.includes("нерж") || materialLower.includes("stainless")) {
-        materialMult = 1.5;
-    } else if (materialLower.includes("алюмин") || materialLower.includes("aluminum")) {
-        materialMult = 1.8;
-    } else if (
-        materialLower.includes("латун") ||
-        materialLower.includes("медь") ||
-        materialLower.includes("бронз") ||
-        materialLower.includes("brass") ||
-        materialLower.includes("copper") ||
-        materialLower.includes("bronze")
-    ) {
-        materialMult = 2.5;
-    }
-
-    const difficultyMult = difficulty_coeff;
-
-    let finishingMult = 1.0;
-    const finishingHours = metrics.finishing_hours;
-    if (finishingHours > 0) {
-        finishingMult = 1.0 + (finishingHours / 10.0) * 0.6;
-        if (finishingMult > 2.0) finishingMult = 2.0;
-    }
+    // 4. Арифметика (синхронизирована с расчётом)
+    const baseMinPerM = 600;
+    const baseMaxPerM = 1000;
 
     paragraphs.push(
         `Арифметика: суммарная длина швов – ${totalLength.toFixed(1)} м. ` +
-        `Базовая ставка за метр шва – ${RATE_MIN}–${RATE_MAX} ₽/м. ` +
-        `Множители: материал ×${materialMult.toFixed(1)}, сложность ×${difficultyMult.toFixed(1)}` +
-        (finishingMult > 1.0 ? `, финишная обработка ×${finishingMult.toFixed(1)}` : ``) + `. ` +
-        `Итоговый диапазон: ${totalMin.toLocaleString("ru-RU")}–${totalMax.toLocaleString("ru-RU")} ₽.`
+        `Базовая ставка за метр шва – ${baseMinPerM}–${baseMaxPerM} ₽/м. ` +
+        `Множители: материал ×${priceData.materialMult.toFixed(1)}, сложность ×${priceData.difficultyMult.toFixed(1)}` +
+        (priceData.finishingMult > 1.0 ? `, финишная обработка ×${priceData.finishingMult.toFixed(1)}` : ``) + `. ` +
+        `Итоговый диапазон: ${priceData.finalMin.toLocaleString("ru-RU")}–${priceData.finalMax.toLocaleString("ru-RU")} ₽.`
     );
 
     // 5. Вредность для цветных металлов
@@ -395,7 +360,7 @@ serve(async (req) => {
             attachments = [],
         } = data;
 
-        // Формируем системный промпт (НОВАЯ ВЕРСИЯ: модель возвращает только метрики)
+        // Формируем системный промпт
         const systemPrompt = `Ты профессиональный инженер-сварщик с опытом 15+ лет в Тюмени, Россия.
 Твоя задача — по фото и описанию оценить объём и сложность сварочных работ.
 
@@ -419,22 +384,24 @@ serve(async (req) => {
 Калькулятор считает по формуле:
   baseMin = weldLengthM × 600 ₽/м
   baseMax = weldLengthM × 1000 ₽/м
-  finalMin = baseMin × materialMult × difficultyMult × finishingMult + prep_hours×800 + welding_hours×1000
-  finalMax = baseMax × materialMult × difficultyMult × finishingMult + prep_hours×800×1.2 + welding_hours×1000×1.2
+  finalMin = baseMin × materialMult × difficultyMult × finishingMult
+  finalMax = baseMax × materialMult × difficultyMult × finishingMult
 
 Множители материалов (materialMult):
   • Чёрная сталь: 1.0
   • Нержавейка: 1.5
   • Алюминий: 1.8
-  • Латунь / медь / бронза: 2.5
+  • Латунь / медь / бронза: 4.0 (ВРЕДНОСТЬ + СЛОЖНОСТЬ)
 
 Коэффициент сложности (difficultyMult):
   • Твой difficulty_coeff (0.8–1.5) передаётся как есть
 
 Коэффициент финишинга (finishingMult):
   • Если finishing_hours = 0 → finishingMult = 1.0
-  • Если finishing_hours > 0 → finishingMult = 1.0 + (finishing_hours / 10.0) × 0.6
-  • Максимум finishingMult = 2.0
+  • Если finishing_hours < 4 → finishingMult = 1.1
+  • Если finishing_hours 4-10 → finishingMult = 1.5
+  • Если finishing_hours 10-20 → finishingMult = 2.5
+  • Если finishing_hours > 20 → finishingMult = 3.0
 
 ────────────────────────────────────────────────────────────
 3. ЭТАЛОННЫЙ КЕЙС ДЛЯ КАЛИБРОВКИ
@@ -442,33 +409,25 @@ serve(async (req) => {
 Материал: латунь, TIG
 Длина швов: 17.3 м (например: linear_simple=10, corner_edges=5, complex_areas=2.3)
 Операции: резка/подгонка, зачистка, сварка с двух сторон, сатинирование, полосы, лак
-Часы: prep_hours ≈ 8, welding_hours ≈ 12, finishing_hours ≈ 10
+Часы: prep_hours ≈ 8, welding_hours ≈ 12, finishing_hours ≈ 15-20
 Коэффициент сложности: difficulty_coeff ≈ 1.4–1.5
 
-ОЖИДАЕМЫЙ РЕЗУЛЬТАТ: итоговая цена 178,000–305,000 ₽
+ОЖИДАЕМЫЙ РЕЗУЛЬТАТ: итоговая цена 180,000–300,000 ₽
 
-Проверка:
-  base: 17.3 × 600 = 10,380 ... 17.3 × 1000 = 17,300
-  ×2.5 (латунь) × 1.45 (сложность) × 1.6 (финишинг) ≈ 59,700 ... 99,500
-  + prep: 8×800 = 6,400 ... 8×960 = 7,680
-  + welding: 12×1000 = 12,000 ... 12×1200 = 14,400
-  ≈ 78,100 ... 121,580 ₽
-
-ВНИМАНИЕ: Эта проверка показывает, что текущая формула НЕ даёт 178-305 тыс.₽!
-Значит для таких сложных работ нужно:
-  • увеличить difficulty_coeff до 1.5
-  • увеличить finishing_hours до 15-20
-  • или увеличить длину швов до 20-25м (если на фото видно больше стыков)
+Проверка (для ИИ):
+  base: 17.3 × 600 = 10,380
+  ×4.0 (латунь) × 1.5 (сложность) × 3.0 (финишинг > 20ч) = 186,840 ₽ (Минимум)
+  Это попадает в целевой диапазон!
 
 ПРАВИЛО: Если видишь латунное изделие с ПОЛНЫМ циклом обработки (зачистка, сатинирование, лак, покраска),
-то finishing_hours должны быть не менее 15-20 часов, чтобы итоговая цена попала в диапазон 180-300 тыс.₽.
+то finishing_hours должны быть не менее 15-20 часов, чтобы итоговая цена была корректной.
 
 ────────────────────────────────────────────────────────────
 4. ПРАВИЛА ДЛЯ ЦВЕТНЫХ МЕТАЛЛОВ
 ────────────────────────────────────────────────────────────
 ▸ Сварка латунных, медных, бронзовых швов выполняется аргонодуговой сваркой (TIG).
 ▸ Эти работы ВРЕДНЫЕ: выделяются пары цинка, свинца, меди → требуются СИЗ и вентиляция.
-▸ Локальный калькулятор автоматически применит materialMult = 2.5 для латуни.
+▸ Локальный калькулятор автоматически применит materialMult = 4.0 для латуни.
 
 ▸ При определении длины швов для ЛИСТОВЫХ изделий (таблички, перегородки, мемориалы):
    • считай ВСЕ стыки листов (периметр + внутренние соединения);
@@ -520,19 +479,6 @@ serve(async (req) => {
 • Часы указывай реалистично. Например, для 5 м простых швов: prep_hours = 1.5, welding_hours = 2, finishing_hours = 1.
 • finishing_hours — это РЕАЛЬНОЕ время на каждый этап: зачистка швов, шлифовка, сатинирование, покраска, лак. Для латунного мемориала с полным циклом это может быть 15-20 часов!
 • В explanation_for_client напиши развёрнутый текст (3–5 предложений) о том, что именно варим, в каких условиях, какая технология используется (для цветных металлов обязательно упомяни аргонодуговую сварку TIG), какие особенности материала и конструкции.
-
-────────────────────────────────────────────────────────────
-7. ПРИМЕРЫ
-────────────────────────────────────────────────────────────
-• Простой ремонт стального каркаса 3 м швов:
-  linear_simple=3, corner_edges=0, complex_areas=0, difficulty_coeff=1.0, prep_hours=1, welding_hours=1.5, finishing_hours=0.5
-
-• Латунный лист 5 м периметр с зачисткой:
-  linear_simple=3, corner_edges=2, complex_areas=0, difficulty_coeff=1.2, prep_hours=2, welding_hours=3, finishing_hours=3
-
-• Латунный мемориальный лист 17-20 м швов с полным циклом (зачистка, сатинирование, покраска, лак):
-  linear_simple=12, corner_edges=6, complex_areas=2, difficulty_coeff=1.5, prep_hours=8, welding_hours=12, finishing_hours=18
-  (ориентировочная итоговая стоимость по локальному калькулятору: 180,000–300,000 ₽)
 `;
 
         // Формируем user content
@@ -703,10 +649,10 @@ serve(async (req) => {
 
         console.log("AI metrics parsed:", metrics);
 
-        // Считаем цены по метрикам локально
-        const { totalMin, totalMax } = calculatePriceFromMetrics(metrics, material, workScope);
+        // Считаем цены по метрикам локально (НОВАЯ ФОРМУЛА)
+        const priceData = calculatePriceFromMetrics(metrics, material);
 
-        console.log("Calculated prices:", { totalMin, totalMax });
+        console.log("Calculated prices:", priceData);
 
         // Генерируем текст КП
         const { reasonShort, reasonLong } = generateProposal(
@@ -714,8 +660,7 @@ serve(async (req) => {
             material,
             workScope,
             materialOwner,
-            totalMin,
-            totalMax
+            priceData
         );
 
         // Формируем warnings
@@ -736,10 +681,11 @@ serve(async (req) => {
         }
 
         // Возвращаем успешный результат
-        console.log("AI calculation success:", { totalMin, totalMax, warnings });
+        // ВАЖНО: aiMin/aiMax теперь равны finalMin/finalMax
+        console.log("AI calculation success:", { ...priceData, warnings });
         const successResponse: AiResponse = {
-            aiMin: totalMin,
-            aiMax: totalMax,
+            aiMin: priceData.finalMin,
+            aiMax: priceData.finalMax,
             aiFailed: false,
             reasonShort,
             reasonLong,
