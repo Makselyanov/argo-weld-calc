@@ -258,6 +258,8 @@ export default function NewCalculation() {
         baseMax: localResult.totalMax,
         totalMin: data.aiMin,            // AI-диапазон (финальная цена)
         totalMax: data.aiMax,
+        aiMin: data.aiMin,
+        aiMax: data.aiMax,
         reasonShort: data.reasonShort,
         reasonLong: data.reasonLong,
         warnings: data.warnings || []
@@ -609,7 +611,11 @@ export default function NewCalculation() {
 
             <div className="glass-card p-6 bg-accent/10 border-accent/30 text-center space-y-3">
               <div className="text-4xl font-bold text-foreground mb-2">
-                {priceResult.totalMin.toLocaleString()} – {priceResult.totalMax.toLocaleString()} ₽
+                {priceResult.totalMin && priceResult.totalMax ? (
+                  `${priceResult.totalMin.toLocaleString()} – ${priceResult.totalMax.toLocaleString()} ₽`
+                ) : (
+                  <span className="text-2xl text-muted-foreground">Расчёт не выполнен, требуется уточнение</span>
+                )}
               </div>
               <p className="text-sm text-muted-foreground">
                 {getLabel(formData.typeOfWork, WORK_TYPES)}, {getLabel(formData.weldType, WELD_TYPES)?.toLowerCase()} шов, {getLabel(formData.material, MATERIALS)?.toLowerCase()}, {formData.volume || 'объём не указан'}

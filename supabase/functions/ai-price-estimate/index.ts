@@ -12,11 +12,15 @@ const corsHeaders = {
 type AiResponse = {
     aiMin: number | null;
     aiMax: number | null;
+    finalMin?: number;
+    finalMax?: number;
     reasonShort: string;
     reasonLong: string;
     aiFailed: boolean;
     warnings: string[];
 };
+
+
 
 // Новая структура ответа от модели (только метрики, БЕЗ цен)
 type AiMetricsResponse = {
@@ -686,6 +690,8 @@ serve(async (req) => {
         const successResponse: AiResponse = {
             aiMin: priceData.finalMin,
             aiMax: priceData.finalMax,
+            finalMin: priceData.finalMin,
+            finalMax: priceData.finalMax,
             aiFailed: false,
             reasonShort,
             reasonLong,
