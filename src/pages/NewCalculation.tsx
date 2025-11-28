@@ -662,7 +662,7 @@ export default function NewCalculation() {
                   <div className="space-y-1">
                     <CardTitle className="text-xl text-foreground">Коммерческое предложение</CardTitle>
                     <CardDescription className="text-slate-400">
-                      Текст ниже можно целиком скопировать и отправить клиенту
+                      Черновик текста для клиента.
                     </CardDescription>
                   </div>
                   <div className="shrink-0 ml-4">
