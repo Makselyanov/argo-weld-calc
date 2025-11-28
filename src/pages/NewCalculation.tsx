@@ -104,7 +104,16 @@ export default function NewCalculation() {
   const [isCalculatingPrice, setIsCalculatingPrice] = useState(false);
   const [priceCalculationMethod, setPriceCalculationMethod] = useState<'ai' | 'fallback' | null>(null);
   const [aiComment, setAiComment] = useState<string | null>(null);
-  const [aiResult, setAiResult] = useState<{ reasonLong?: string } | null>(null);
+  const [aiResult, setAiResult] = useState<{
+    aiFailed?: boolean;
+    aiMin?: number;
+    aiMax?: number;
+    finalMin?: number;
+    finalMax?: number;
+    reasonShort?: string;
+    reasonLong?: string;
+    warnings?: string[];
+  } | null>(null);
   const [photoMetadata, setPhotoMetadata] = useState<{ name: string }[]>([]);
 
   const hasAiProposal = !!aiResult?.reasonLong?.trim();
@@ -268,17 +277,6 @@ export default function NewCalculation() {
         reasonShort: data.reasonShort,
         reasonLong: data.reasonLong,
         warnings: data.warnings ?? [],
-      });
-
-      // DEBUG: проверка, что правильные данные устанавливаются
-      console.log('DEBUG priceResult after AI', {
-        localResult,
-        aiMin: data.aiMin,
-        aiMax: data.aiMax,
-        finalMin: data.finalMin,
-        finalMax: data.finalMax,
-        totalMin: data.finalMin ?? data.aiMin,
-        totalMax: data.finalMax ?? data.aiMax,
       });
 
       setPriceCalculationMethod('ai');
@@ -624,18 +622,32 @@ export default function NewCalculation() {
 
         {step === 3 && priceResult && (
           <GlassCard className="space-y-6">
-            <h2 className="text-2xl font-bold text-center">Оценка стоимости (DEBUG)</h2>
+            <h2 className="text-2xl font-bold text-center">Оценка стоимости</h2>
 
             <div className="glass-card p-6 bg-accent/10 border-accent/30 text-center space-y-3">
+              {/* ГЛАВНАЯ ЦЕНА: сначала финальный диапазон AI, потом fallback к локальному */}
               <div className="text-4xl font-bold text-foreground mb-2">
-                {priceResult.totalMin && priceResult.totalMax ? (
+                {priceCalculationMethod === 'ai' &&
+                  aiResult &&
+                  !aiResult.aiFailed &&
+                  typeof aiResult.finalMin === 'number' &&
+                  typeof aiResult.finalMax === 'number' ? (
+                  `${aiResult.finalMin.toLocaleString()} – ${aiResult.finalMax.toLocaleString()} ₽`
+                ) : priceResult.totalMin && priceResult.totalMax ? (
                   `${priceResult.totalMin.toLocaleString()} – ${priceResult.totalMax.toLocaleString()} ₽`
                 ) : (
-                  <span className="text-2xl text-muted-foreground">Расчёт не выполнен, требуется уточнение</span>
+                  <span className="text-2xl text-muted-foreground">
+                    Расчёт не выполнен, требуется уточнение
+                  </span>
                 )}
               </div>
+
+              {/* Краткое описание параметров */}
               <p className="text-sm text-muted-foreground">
-                {getLabel(formData.typeOfWork, WORK_TYPES)}, {getLabel(formData.weldType, WELD_TYPES)?.toLowerCase()} шов, {getLabel(formData.material, MATERIALS)?.toLowerCase()}, {formData.volume || 'объём не указан'}
+                {getLabel(formData.typeOfWork, WORK_TYPES)},{' '}
+                {getLabel(formData.weldType, WELD_TYPES)?.toLowerCase()} шов,{' '}
+                {getLabel(formData.material, MATERIALS)?.toLowerCase()},{' '}
+                {formData.volume || 'объём не указан'}
               </p>
 
               {/* Информация о методе расчёта */}
