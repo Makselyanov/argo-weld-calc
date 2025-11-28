@@ -7,6 +7,8 @@ export interface PriceResult {
     totalMin: number;
     totalMax: number;
     // Данные от AI (опционально)
+    aiMin?: number;            // Минимальная цена от AI
+    aiMax?: number;            // Максимальная цена от AI
     reasonShort?: string;      // Короткое объяснение цены от AI
     reasonLong?: string;       // Развёрнутое КП от AI
     warnings?: string[];       // Предупреждения от AI

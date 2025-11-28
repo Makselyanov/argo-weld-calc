@@ -254,16 +254,33 @@ export default function NewCalculation() {
 
       // Успешный расчёт через AI
       setPriceResult({
-        baseMin: localResult.totalMin,  // базовый диапазон от локального калькулятора
+        baseMin: localResult.totalMin,  // локальный расчёт только «для справки»
         baseMax: localResult.totalMax,
-        totalMin: data.aiMin,            // AI-диапазон (финальная цена)
-        totalMax: data.aiMax,
-        aiMin: data.aiMin,
-        aiMax: data.aiMax,
+
+        // ГЛАВНЫЙ диапазон, который должен идти в шапку и всю официальную арифметику:
+        totalMin: data.finalMin ?? data.aiMin ?? localResult.totalMin,
+        totalMax: data.finalMax ?? data.aiMax ?? localResult.totalMax,
+
+        // Дублируем для совместимости, если где-то ещё используется aiMin/aiMax:
+        aiMin: data.aiMin ?? data.finalMin ?? localResult.totalMin,
+        aiMax: data.aiMax ?? data.finalMax ?? localResult.totalMax,
+
         reasonShort: data.reasonShort,
         reasonLong: data.reasonLong,
-        warnings: data.warnings || []
+        warnings: data.warnings ?? [],
       });
+
+      // DEBUG: проверка, что правильные данные устанавливаются
+      console.log('DEBUG priceResult after AI', {
+        localResult,
+        aiMin: data.aiMin,
+        aiMax: data.aiMax,
+        finalMin: data.finalMin,
+        finalMax: data.finalMax,
+        totalMin: data.finalMin ?? data.aiMin,
+        totalMax: data.finalMax ?? data.aiMax,
+      });
+
       setPriceCalculationMethod('ai');
       setAiComment(data.reasonShort || null);
       setAiResult(data);
