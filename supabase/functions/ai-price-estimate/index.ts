@@ -18,43 +18,286 @@ type AiResponse = {
     warnings: string[];
 };
 
+// Новая структура ответа от модели (только метрики, БЕЗ цен)
+type AiMetricsResponse = {
+    weld_length_m: {
+        linear_simple: number;
+        corner_edges: number;
+        complex_areas: number;
+    };
+    difficulty_coeff: number;
+    prep_hours: number;
+    welding_hours: number;
+    finishing_hours: number;
+    risk_level: "low" | "medium" | "high";
+    uncertainty_comment: string;
+    explanation_for_client: string;
+};
+
 /**
- * Парсит JSON из текстового ответа AI
- * Ищет первый { и последний }, парсит это как JSON
+ * Парсит JSON из текстового ответа AI (новая структура с метриками)
  */
-function parseAiJson(content: string): { finalMin: number; finalMax: number; reasonShort: string; reasonLong: string; warnings?: string[] } | null {
+function parseAiMetrics(content: string): AiMetricsResponse | null {
     try {
         const firstBrace = content.indexOf("{");
         const lastBrace = content.lastIndexOf("}");
 
         if (firstBrace === -1 || lastBrace === -1 || firstBrace >= lastBrace) {
-            console.error("parseAiJson: No valid JSON braces found");
+            console.error("parseAiMetrics: No valid JSON braces found");
             return null;
         }
 
         const jsonStr = content.slice(firstBrace, lastBrace + 1);
         const parsed = JSON.parse(jsonStr);
 
+        // Валидация новой структуры
         if (
-            typeof parsed.finalMin !== "number" ||
-            typeof parsed.finalMax !== "number" ||
-            typeof parsed.reasonLong !== "string"
+            !parsed.weld_length_m ||
+            typeof parsed.weld_length_m.linear_simple !== "number" ||
+            typeof parsed.weld_length_m.corner_edges !== "number" ||
+            typeof parsed.weld_length_m.complex_areas !== "number" ||
+            typeof parsed.difficulty_coeff !== "number" ||
+            typeof parsed.prep_hours !== "number" ||
+            typeof parsed.welding_hours !== "number" ||
+            typeof parsed.finishing_hours !== "number" ||
+            !parsed.risk_level ||
+            typeof parsed.uncertainty_comment !== "string" ||
+            typeof parsed.explanation_for_client !== "string"
         ) {
-            console.error("parseAiJson: Invalid structure", parsed);
+            console.error("parseAiMetrics: Invalid structure", parsed);
             return null;
         }
 
-        return {
-            finalMin: parsed.finalMin,
-            finalMax: parsed.finalMax,
-            reasonShort: typeof parsed.reasonShort === "string" ? parsed.reasonShort : "",
-            reasonLong: parsed.reasonLong,
-            warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
-        };
+        return parsed as AiMetricsResponse;
     } catch (err) {
-        console.error("parseAiJson: Parse error", err);
+        console.error("parseAiMetrics: Parse error", err);
         return null;
     }
+}
+
+/**
+ * Расчёт цены по метрикам и тарифам
+ */
+function calculatePriceFromMetrics(
+    metrics: AiMetricsResponse,
+    material: string,
+    workScope: string
+): { totalMin: number; totalMax: number } {
+    const { weld_length_m, difficulty_coeff, prep_hours, welding_hours, finishing_hours } = metrics;
+
+    // Суммарная длина швов
+    const totalLength = weld_length_m.linear_simple + weld_length_m.corner_edges + weld_length_m.complex_areas;
+
+    // Базовые тарифы за метр для стали (Тюмень)
+    const STEEL_BASE_MIN = 400;
+    const STEEL_BASE_MAX = 700;
+
+    // Множители для разных материалов
+    const materialLower = (material || "").toLowerCase();
+    let materialMult = 1.0;
+
+    if (materialLower.includes("нерж") || materialLower.includes("stainless")) {
+        materialMult = 1.4;
+    } else if (
+        materialLower.includes("алюмин") ||
+        materialLower.includes("aluminum")
+    ) {
+        materialMult = 1.6;
+    } else if (
+        materialLower.includes("латун") ||
+        materialLower.includes("медь") ||
+        materialLower.includes("бронз") ||
+        materialLower.includes("brass") ||
+        materialLower.includes("copper") ||
+        materialLower.includes("bronze")
+    ) {
+        materialMult = 1.7;
+    }
+
+    const rateMin = STEEL_BASE_MIN * materialMult;
+    const rateMax = STEEL_BASE_MAX * materialMult;
+
+    // Стоимость сварки с учётом коэффициента сложности
+    const weldCostMin = totalLength * rateMin * difficulty_coeff;
+    const weldCostMax = totalLength * rateMax * difficulty_coeff;
+
+    // Почасовые ставки
+    const HOURLY = {
+        prep: 800,
+        weld: 1000,
+        finish: 800,
+    };
+
+    const timeCostMin =
+        prep_hours * HOURLY.prep +
+        welding_hours * HOURLY.weld +
+        finishing_hours * HOURLY.finish;
+
+    const timeCostMax = timeCostMin * 1.2; // +20% на риск
+
+    // Итоговые цены
+    const totalMin = Math.round(weldCostMin + timeCostMin);
+    const totalMax = Math.round(weldCostMax + timeCostMax);
+
+    return { totalMin, totalMax };
+}
+
+/**
+ * Генерация текста КП на основе метрик
+ */
+function generateProposal(
+    metrics: AiMetricsResponse,
+    material: string,
+    workScope: string,
+    materialOwner: string,
+    totalMin: number,
+    totalMax: number
+): { reasonShort: string; reasonLong: string } {
+    const { weld_length_m, difficulty_coeff, risk_level, uncertainty_comment, explanation_for_client } = metrics;
+
+    const totalLength = weld_length_m.linear_simple + weld_length_m.corner_edges + weld_length_m.complex_areas;
+    const materialLower = (material || "сталь").toLowerCase();
+
+    // reasonShort
+    let reasonShort = "";
+    if (materialLower.includes("латун") || materialLower.includes("brass")) {
+        reasonShort = "Сварка латунного изделия с зачисткой и финишной обработкой";
+    } else if (materialLower.includes("медь") || materialLower.includes("copper")) {
+        reasonShort = "Сварка медной конструкции с подготовкой и обработкой";
+    } else if (materialLower.includes("бронз") || materialLower.includes("bronze")) {
+        reasonShort = "Сварка бронзового изделия с финишной обработкой";
+    } else if (materialLower.includes("нерж") || materialLower.includes("stainless")) {
+        reasonShort = "Сварка нержавеющей стали с обработкой и полировкой";
+    } else if (materialLower.includes("алюмин") || materialLower.includes("aluminum")) {
+        reasonShort = "Сварка алюминиевой конструкции";
+    } else {
+        reasonShort = "Сварка стальной конструкции с подготовкой и обработкой";
+    }
+
+    // reasonLong (полное КП)
+    const paragraphs: string[] = [];
+
+    // 1. Вступление
+    paragraphs.push(
+        "Мы занимаемся профессиональной сваркой металлоконструкций в Тюмени. " +
+        "Выполняем весь спектр работ: от небольших ремонтов до изготовления сложных изделий с нуля. " +
+        "Наши специалисты имеют опыт работы с чёрными и цветными металлами, аттестацию и необходимое оборудование."
+    );
+
+    // 2. Описание работ (используем explanation_for_client)
+    paragraphs.push(explanation_for_client);
+
+    // 3. Блок стоимости
+    paragraphs.push(
+        `Предварительная стоимость работ: от ${totalMin.toLocaleString("ru-RU")} до ${totalMax.toLocaleString("ru-RU")} ₽. ` +
+        "Точная сумма зависит от объёма сварки, сложности узлов и необходимости дополнительных услуг."
+    );
+
+    // 4. Арифметика
+    const STEEL_BASE_MIN = 400;
+    const STEEL_BASE_MAX = 700;
+    let materialMult = 1.0;
+    if (materialLower.includes("нерж") || materialLower.includes("stainless")) {
+        materialMult = 1.4;
+    } else if (materialLower.includes("алюмин") || materialLower.includes("aluminum")) {
+        materialMult = 1.6;
+    } else if (
+        materialLower.includes("латун") ||
+        materialLower.includes("медь") ||
+        materialLower.includes("бронз") ||
+        materialLower.includes("brass") ||
+        materialLower.includes("copper") ||
+        materialLower.includes("bronze")
+    ) {
+        materialMult = 1.7;
+    }
+    const rateMin = Math.round(STEEL_BASE_MIN * materialMult);
+    const rateMax = Math.round(STEEL_BASE_MAX * materialMult);
+
+    paragraphs.push(
+        `Арифметика: суммарная длина швов – ${totalLength.toFixed(1)} м. ` +
+        `Базовая ставка за метр шва с учётом материала и условий работ – ${rateMin}–${rateMax} ₽/м. ` +
+        `С учётом коэффициента сложности (${difficulty_coeff.toFixed(1)}), подготовительных и финишных операций ` +
+        `получаем диапазон ${totalMin.toLocaleString("ru-RU")}–${totalMax.toLocaleString("ru-RU")} ₽.`
+    );
+
+    // 5. Вредность для цветных металлов
+    const isColoredMetal =
+        materialLower.includes("латун") ||
+        materialLower.includes("медь") ||
+        materialLower.includes("бронз") ||
+        materialLower.includes("brass") ||
+        materialLower.includes("copper") ||
+        materialLower.includes("bronze") ||
+        materialLower.includes("нерж") ||
+        materialLower.includes("stainless");
+
+    if (isColoredMetal) {
+        const metalName = materialLower.includes("нерж") || materialLower.includes("stainless")
+            ? "нержавеющих"
+            : materialLower.includes("латун") || materialLower.includes("brass")
+                ? "латунных"
+                : materialLower.includes("медь") || materialLower.includes("copper")
+                    ? "медных"
+                    : materialLower.includes("бронз") || materialLower.includes("bronze")
+                        ? "бронзовых"
+                        : "цветных";
+
+        paragraphs.push(
+            `При сварке ${metalName} сплавов выделяются вредные пары и аэрозоли (цинк, свинец, медь и др.), ` +
+            "поэтому работы выполняются аргонодуговой сваркой (TIG) с применением вентиляции и средств индивидуальной защиты, " +
+            "в соответствии с требованиями охраны труда. " +
+            "Это усложняет процесс и повышает стоимость, но обеспечивает безопасность и стабильное качество швов."
+        );
+    }
+
+    // 6. Материалы и расходники
+    if (workScope === "repair") {
+        paragraphs.push(
+            "Вы предоставляете существующую конструкцию для ремонта. " +
+            "Металл для заплат (при необходимости), электроды, газ и все расходные материалы входят в стоимость работ."
+        );
+    } else if (workScope === "from_blanks") {
+        paragraphs.push(
+            "Металл и заготовки вы предоставляете самостоятельно. " +
+            "Сварочные материалы (электроды, проволока, газ, шлифовальные круги и прочие расходники) входят в стоимость работ."
+        );
+    } else {
+        // from_scratch
+        if (materialOwner === "client") {
+            paragraphs.push(
+                "Металл вы предоставляете самостоятельно (либо мы поможем с закупкой за отдельную плату). " +
+                "Все сварочные материалы и расходники входят в стоимость работ."
+            );
+        } else {
+            paragraphs.push(
+                "Металл и все расходные материалы (электроды, газ, абразивы) включены в стоимость работ. " +
+                "Вам не нужно ничего докупать — мы берём на себя всю организацию процесса."
+            );
+        }
+    }
+
+    // 7. Выгоды и гарантия
+    paragraphs.push(
+        "Все швы выполняются в соответствии с ГОСТ. Ориентировочный срок выполнения — от 1 до 5 дней в зависимости от объёма. " +
+        "Предоставляем гарантию на сварные соединения. По желанию можем организовать неразрушающий контроль (ВИК, УЗК) и оформить необходимую документацию."
+    );
+
+    // 8. Дополнительные услуги
+    paragraphs.push(
+        "Дополнительно можем выполнить: выезд мастера на замер, доставку конструкции, монтаж и демонтаж, " +
+        "покраску или антикоррозионную обработку, оформление паспортов и исполнительной документации."
+    );
+
+    // 9. Закрывающий призыв
+    paragraphs.push(
+        "Свяжитесь с нами для уточнения деталей, согласования сроков и окончательной стоимости. " +
+        "Готовы ответить на все вопросы и приступить к работе в удобное для вас время."
+    );
+
+    const reasonLong = paragraphs.join("\n\n");
+
+    return { reasonShort, reasonLong };
 }
 
 serve(async (req) => {
@@ -101,230 +344,51 @@ serve(async (req) => {
             attachments = [],
         } = data;
 
-        // Формируем системный промпт
-        const systemPrompt = `Ты опытный мастер-сварщик и специалист по ценообразованию для рынка Тюмени, РФ.
-Твоя задача — САМОСТОЯТЕЛЬНО оценить стоимость сварочных работ на основе анализа изображений и описания, а также сформировать развёрнутое коммерческое предложение для клиента.
+        // Формируем системный промпт (НОВАЯ ВЕРСИЯ: модель возвращает только метрики)
+        const systemPrompt = `Ты профессиональный инженер-сварщик с опытом 15+ лет. 
+Твоя задача — по фото и описанию оценить объём и сложность сварочных работ, 
+НО НЕ считать финальную цену в рублях. Цены считает мой калькулятор.
 
-═══════════════════════════════════════════════════════════════════════════════
-1. РАСЧЁТ ЦЕН И СИНХРОНИЗАЦИЯ ДИАПАЗОНОВ
-═══════════════════════════════════════════════════════════════════════════════
+Всегда сначала внимательно анализируй фото и текст. 
+Если критически не хватает данных, в "uncertainty_comment" напиши, какие доп. фото или замеры нужны.
 
-1.1. Главное правило синхронизации:
-   • aiMin = finalMin
-   • aiMax = finalMax
-   
-   Никаких других диапазонов. Всё, что отображается в интерфейсе и в тексте КП, должно использовать ТОЛЬКО эти aiMin/aiMax.
+Тебе приходят:
+- город (Тюмень, Россия),
+- материал ("steel" / "stainless" / "aluminum" / "brass" / "copper" / "bronze"),
+- толщина,
+- условия работ,
+- тип задачи (from_scratch / repair / from_blanks),
+- краткое текстовое описание,
+- ссылка на фотографии/изображения конструкции.
 
-1.2. Алгоритм расчёта базовой стоимости:
-
-   ШАГ 1: Извлечь суммарную длину швов
-   • Из volume или descriptionStep2 вытащить длину в см/мм/м → перевести в метры
-   • Если длина не указана явно, оценить по фото/чертежу
-   • Если невозможно определить — вернуть null и попросить уточнить
-
-   ШАГ 2: Выбрать базовую ставку за метр в зависимости от материала
-   • Чёрный металл: 400–1000 ₽/м (базовые условия: стык, низ, помещение)
-   • Нержавейка: множитель 1.5–2 к чёрному → 600–2000 ₽/м
-   • Латунь/медь/бронза: множитель 2–3 к чёрному → 800–3000 ₽/м
-   • Алюминий: множитель 2–2.5 к чёрному → 800–2500 ₽/м
-
-   ШАГ 3: Посчитать грубый коридор
-   baseMin = lengthMeters × rateMin
-   baseMax = lengthMeters × rateMax
-
-   ШАГ 4: Применить коэффициенты сложности
-   • Положение (вертикальное/потолочное): +20–50%
-   • Высота/стеснённый доступ: +30–80%
-   • Срочность: +20–40%
-   • Специальные требования (НАКС, НК): +30–100%
-   
-   Общий итоговый множитель сложности: от 1.0 (простые условия) до 2.0 (средняя сложность), максимум до 3.0 только при РЕАЛЬНО жёстких условиях.
-   
-   finalMin = baseMin × kComplex
-   finalMax = baseMax × kComplex
-
-1.3. Защита от идиотских значений:
-
-   ПРОВЕРКА 1: Ставка за метр
-   • Если finalMin/lengthMeters < 200 ₽/м ИЛИ finalMax/lengthMeters > 3000 ₽/м
-   • То пересчитать с разумными ставками (из ШАГ 2) без экстремальных коэффициентов
-   
-   ПРОВЕРКА 2: Общий диапазон
-   • Если finalMin или finalMax > 3–4× localMax без явных причин (экзотика, высота, ночь)
-   • То мягко прижать к диапазону localMin/localMax с объяснением в reasonLong
-
-1.4. Арифметика в reasonLong (ОБЯЗАТЕЛЬНЫЙ БЛОК):
-
-   В reasonLong ОБЯЗАТЕЛЬНО добавить отдельный абзац с подробной арифметикой:
-   
-   Пример:
-   «Арифметика: суммарная длина швов – 17,3 м. Базовая ставка за латунный шов в аргоне с подготовкой и зачисткой – 1 200–1 600 ₽/м. С учётом сложности и дополнительных операций получаем диапазон 520 000–635 000 ₽.»
-   
-   ВАЖНО: Числа в последней строке брать НАПРЯМУЮ из finalMin и finalMax (которые = aiMin/aiMax).
-   Запрещено писать в арифметике суммы, отличающиеся от aiMin/aiMax!
-
-═══════════════════════════════════════════════════════════════════════════════
-2. МАТЕРИАЛЫ, РАСХОДНИКИ И ТИП РАБОТЫ
-═══════════════════════════════════════════════════════════════════════════════
-
-Используем поля:
-• workScope – "from_scratch", "from_blanks", "repair"
-• materialOwner – "client" или "contractor"
-
-ПРАВИЛА:
-
-A) workScope = "repair" (переделка/ремонт):
-   • Клиент предоставляет только существующую конструкцию
-   • Металл для заплат/вставок, электроды/проволока, газ, расходники – ИСПОЛНИТЕЛЯ
-   • ЗАПРЕЩЕНО писать: «металл, электроды и расходники вы предоставляете самостоятельно»
-
-B) workScope = "from_blanks" (сварка из заготовок):
-   • Клиент предоставляет металл/заготовки
-   • Сварочные материалы и расходники (электроды, проволока, газ, шлифкруги) – ИСПОЛНИТЕЛЯ
-   • Допустимый текст: «Металл вы предоставляете, все сварочные материалы и расходники входят в стоимость работ»
-
-C) workScope = "from_scratch" (изготовление с нуля):
-   • По умолчанию ВСЁ (металл + расходники) – ИСПОЛНИТЕЛЯ, если в описании не сказано обратное
-   • materialOwner использовать только как уточнение:
-     - "contractor" → подчёркиваем, что металл включён в цену
-     - "client" → пишем, что цена за работы, но расходники всё равно наши
-
-ГЛАВНОЕ: Электроды, проволока, газ, абразивы ВСЕГДА предоставляет ИСПОЛНИТЕЛЬ, независимо от workScope!
-
-═══════════════════════════════════════════════════════════════════════════════
-3. ТЕХНОЛОГИЯ СВАРКИ ДЛЯ ЛАТУНИ И ЦВЕТНЫХ МЕТАЛЛОВ
-═══════════════════════════════════════════════════════════════════════════════
-
-• Чёрный металл → можно ручная дуговая, полуавтомат в CO₂/MAG
-• Нержавейка → аргонодуговая или сварка в смеси защитных газов, НЕ чистый CO₂
-• Латунь, медь, бронза, алюминий → ВСЕГДА аргонодуговая (TIG) сварка
-
-ЗАПРЕТИТЬ для цветных металлов формулировки «полуавтоматическая сварка в среде CO₂».
-
-В текст КП для латуни/меди/бронзы/алюминия ОБЯЗАТЕЛЬНО добавить:
-• «Работы выполняются аргонодуговой сваркой (TIG)»
-• «Используется специализированный присадочный материал для [материал] сплавов»
-
-═══════════════════════════════════════════════════════════════════════════════
-4. ВРЕДНОСТЬ И УСИЛЕНИЕ КП
-═══════════════════════════════════════════════════════════════════════════════
-
-Для материалов: латунь, медь, бронза, нержавейка — в текст КП ВСЕГДА добавлять отдельный абзац:
-
-«При сварке латунных/нержавеющих сплавов выделяются вредные пары и аэрозоли (цинк, свинец, медь и др.), поэтому работы выполняются с применением вентиляции и средств индивидуальной защиты, в соответствии с требованиями охраны труда. Это усложняет процесс и повышает стоимость, но обеспечивает безопасность и стабильное качество швов.»
-
-Этот абзац должен быть ОТДЕЛЬНЫМ абзацем В СЕРЕДИНЕ КП, а не в примечании в конце.
-
-═══════════════════════════════════════════════════════════════════════════════
-5. СТРУКТУРА И ДЛИНА КП
-═══════════════════════════════════════════════════════════════════════════════
-
-КП должно быть БОГАТЫМ и ДЛИННЫМ (минимум 4–6 полноценных абзацев).
-Арифметика и вредность идут ДОПОЛНИТЕЛЬНО, а не вместо основного текста.
-
-ОБЯЗАТЕЛЬНАЯ СТРУКТУРА:
-
-1. Вступление (1 абзац)
-   • Кто мы, чем занимаемся
-   • Город (Тюмень)
-   • В общем виде о компетенциях
-
-2. Описание конкретного заказа (1-2 абзаца)
-   • Что именно делаем в этом проекте
-   • Материал, длина швов, условия работ
-   • Технология сварки (особенно для цветных металлов)
-
-3. Блок стоимости (1 абзац)
-   • «Предварительная стоимость работ: от {aiMin} до {aiMax} ₽.»
-   • «Точная сумма зависит от объёма сварки, сложности узлов и необходимости дополнительных услуг.»
-
-4. Арифметика (ОТДЕЛЬНЫЙ абзац, обязательно!)
-   • Длина швов
-   • Базовая ставка за метр
-   • Итоговая вилка = aiMin–aiMax
-   
-   Пример: «Арифметика: суммарная длина швов – 17,3 м. Базовая ставка за латунный шов в аргоне с подготовкой и зачисткой – 1 200–1 600 ₽/м. С учётом сложности и дополнительных операций получаем диапазон 520 000–635 000 ₽.»
-
-5. Особенности материала и вредности (ОТДЕЛЬНЫЙ абзац, если материал цветной/нержавейка!)
-   • Использовать текст из раздела 4 выше
-
-6. Выгоды и гарантия (1-2 абзаца)
-   • Что клиент получит
-   • Упоминание ГОСТ, надёжности
-   • Примерные сроки
-   • Гарантия на швы
-
-7. Дополнительные услуги (1 абзац)
-   • Выезд на замер
-   • Доставка
-   • Монтаж/демонтаж
-   • Покраска
-   • НК (ВИК/УЗК)
-   • Оформление документации
-
-ВАЖНО:
-• В сам текст КП НЕ добавлять заголовок «Коммерческое предложение»
-• Заголовок подставляется только на фронте при копировании
-• КП должно начинаться сразу с сути, например: «Мы занимаемся сварочными работами...»
-
-НЕ СОКРАЩАТЬ ТЕКСТ! Это должен быть ПОЛНОЦЕННЫЙ развёрнутый документ, который впечатлит клиента.
-
-═══════════════════════════════════════════════════════════════════════════════
-6. ФОРМАТ ОТВЕТА
-═══════════════════════════════════════════════════════════════════════════════
-
-Верни ответ СТРОГО в формате JSON:
+Твой ответ ДОЛЖЕН быть строго в формате JSON с полями:
 
 {
-  "finalMin": number | null,
-  "finalMax": number | null,
-  "reasonShort": string,
-  "reasonLong": string,
-  "warnings": string[]
+  "weld_length_m": {
+    "linear_simple": number,    // суммарная длина простых линейных швов, м
+    "corner_edges": number,     // углы, торцы, примыкания, м
+    "complex_areas": number     // труднодоступные/сложные зоны, м
+  },
+  "difficulty_coeff": number,   // 0.8, 1.0, 1.2, 1.4, 1.5 (коэффициент общей сложности)
+  "prep_hours": number,         // часы подготовки (резка, подгонка, зачистка кромок)
+  "welding_hours": number,      // чистое время сварки
+  "finishing_hours": number,    // зачистка, сатинирование, покраска и т.п.
+  "risk_level": "low" | "medium" | "high",
+  "uncertainty_comment": "string",   // что может измениться или чего не видно
+  "explanation_for_client": "string" // человеческое объяснение, из чего складывается объём и сложность
 }
 
-• finalMin и finalMax — это и есть aiMin/aiMax (те же числа!)
-• reasonShort — краткая суть для быстрого просмотра
-• reasonLong — полное развёрнутое КП по структуре выше
-• warnings — массив предупреждений (если есть)
+Никаких других полей, никакого текста вне JSON.
 
-Если не смог посчитать (нет длины, каша в данных) — ставь finalMin/finalMax = null, в reasonLong пиши, что нужно уточнить размеры.
+ВАЖНО:
+- Если по фото/описанию невозможно определить длины швов, верни все числовые метрики как 0 и подробно опиши в uncertainty_comment, что требуется.
+- difficulty_coeff: 0.8 (очень просто), 1.0 (норма), 1.2 (средняя сложность), 1.4 (сложно), 1.5 (очень сложно).
+- Часы указывай реалистично. Например, для 5 м простых швов: prep_hours = 1.5, welding_hours = 2, finishing_hours = 1.
+- В explanation_for_client напиши развёрнутый текст (3–5 предложений) о том, что именно варим, в каких условиях, какая технология используется (для цветных металлов обязательно упомяни аргонодуговую сварку TIG), какие особенности материала и конструкции.
 
-═══════════════════════════════════════════════════════════════════════════════
-ДАННЫЕ ЗАЯВКИ:
-═══════════════════════════════════════════════════════════════════════════════
-
-• Описание: ${description || "нет"}
-• Уточнения (шаг 2): ${descriptionStep2 || "нет"}
-• Материал: ${material || "не указан"}
-• Толщина: ${thickness || "не указана"}
-• Объём работ: ${volume || "не указан"}
-• Положение: ${position || "не указано"}
-• Условия работы: ${conditions.join(", ") || "обычные"}
-• Режим работы (workScope): ${workScope || "не указан"}
-• Материал предоставляет (materialOwner): ${materialOwner === "client" ? "заказчик (считаем только работу)" : materialOwner === "contractor" ? "исполнитель (нужно купить и включить в цену)" : "не указано"}
-• Доп. услуги: ${extraServices.join(", ") || "нет"}
-• Локальный калькулятор (справочно): ${localMin || 0} - ${localMax || 0} ₽
-
-═══════════════════════════════════════════════════════════════════════════════
-ИТОГОВЫЙ АЛГОРИТМ РАБОТЫ:
-═══════════════════════════════════════════════════════════════════════════════
-
-1. Анализируй фото/чертежи (если есть в attachments) В ПЕРВУЮ ОЧЕРЕДЬ → определи тип изделия, длину швов
-2. Используй текстовые поля для уточнения параметров
-3. localMin/localMax — ТОЛЬКО ориентир, а НЕ готовый ответ
-4. Для ЦВЕТНЫХ МЕТАЛЛОВ (латунь, бронза, медь, алюминий, нержавейка):
-   • Указывай АРГОНОДУГОВУЮ сварку (TIG), НЕ упоминай CO₂/MAG
-   • Добавляй блок о ВРЕДНОСТИ и мерах безопасности в reasonLong (в середине КП)
-   • Используй повышенные ставки и коэффициенты сложности
-5. Рассчитывай finalMin/finalMax по алгоритму из раздела 1
-6. Добавляй отдельный абзац с АРИФМЕТИКОЙ в reasonLong (раздел 1.4)
-7. РАСХОДНИКИ (электроды, газ, абразивы) ВСЕГДА предоставляет ИСПОЛНИТЕЛЬ
-8. Формируй развёрнутое КП по структуре из раздела 5 (минимум 4–6 абзацев + арифметика + вредность)
-9. В КП обязательно укажи вилку цен из finalMin/finalMax и опиши арифметику
-10. Если данных мало — не возвращай числа (null), в reasonLong — вежливая просьба уточнить детали
-
-ПОМНИ: aiMin = finalMin, aiMax = finalMax. Везде один диапазон!`;
+Примеры:
+• Простой ремонт стального каркаса 3 м швов: linear_simple=3, corner_edges=0, complex_areas=0, difficulty_coeff=1.0, prep_hours=1, welding_hours=1.5, finishing_hours=0.5
+• Латунный лист 5 м периметр с зачисткой: linear_simple=3, corner_edges=2, complex_areas=0, difficulty_coeff=1.2, prep_hours=2, welding_hours=3, finishing_hours=2`;
 
         // Формируем user content
         const userContent: any[] = [
@@ -473,18 +537,18 @@ C) workScope = "from_scratch" (изготовление с нуля):
 
         console.log("AI raw text:", content);
 
-        // Парсим JSON из текста
-        const parsed = parseAiJson(content);
+        // Парсим JSON с новой структурой (метрики)
+        const metrics = parseAiMetrics(content);
 
-        if (!parsed) {
-            console.error("Failed to parse AI JSON from content");
+        if (!metrics) {
+            console.error("Failed to parse AI metrics from content");
             const errorResponse: AiResponse = {
                 aiMin: null,
                 aiMax: null,
                 aiFailed: true,
-                reasonShort: "Ошибка разбора ответа ИИ",
-                reasonLong: "ИИ вернул ответ в некорректном формате. Показана базовая стоимость по внутреннему калькулятору.",
-                warnings: ["Расчёт выполнен без участия ИИ, только по базовым тарифам."],
+                reasonShort: "Ошибка AI-расчёта",
+                reasonLong: "Не удалось корректно разобрать ответ нейросети. Расчёт не выполнен, требуется уточнение данных.",
+                warnings: ["Проблема с форматом ответа AI"],
             };
             return new Response(JSON.stringify(errorResponse), {
                 status: 200,
@@ -492,131 +556,49 @@ C) workScope = "from_scratch" (изготовление с нуля):
             });
         }
 
-        const finalMin = Number(parsed.finalMin);
-        const finalMax = Number(parsed.finalMax);
+        console.log("AI metrics parsed:", metrics);
 
-        // Проверка на валидность
-        const isValidNumbers = Number.isFinite(finalMin) && finalMin > 0 && Number.isFinite(finalMax) && finalMax > 0;
+        // Считаем цены по метрикам локально
+        const { totalMin, totalMax } = calculatePriceFromMetrics(metrics, material, workScope);
 
-        if (!isValidNumbers) {
-            console.warn("AI returned invalid price:", { finalMin, finalMax });
-            const errorResponse: AiResponse = {
-                aiMin: null,
-                aiMax: null,
-                aiFailed: true,
-                reasonShort: "Ошибка оценки ИИ",
-                reasonLong: "Нейросеть не смогла корректно оценить стоимость (ответ не прошел проверку безопасности). Показана базовая стоимость по внутреннему калькулятору.",
-                warnings: ["ИИ вернул некорректные данные, использован резервный расчёт"],
-            };
-            return new Response(JSON.stringify(errorResponse), {
-                status: 200,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
+        console.log("Calculated prices:", { totalMin, totalMax });
+
+        // Генерируем текст КП
+        const { reasonShort, reasonLong } = generateProposal(
+            metrics,
+            material,
+            workScope,
+            materialOwner,
+            totalMin,
+            totalMax
+        );
+
+        // Формируем warnings
+        const warnings: string[] = [];
+        const totalLength =
+            metrics.weld_length_m.linear_simple +
+            metrics.weld_length_m.corner_edges +
+            metrics.weld_length_m.complex_areas;
+
+        if (totalLength === 0 || metrics.risk_level === "high") {
+            warnings.push(
+                "Оценка ориентировочная, для точного расчёта требуется выезд на объект или дополнительные фото."
+            );
         }
 
-        // ЗАЩИТА ОТ БРЕДА: проверка цены за метр
-        // Пытаемся извлечь длину швов из volume
-        const rawVolume = volume ?? '';
-        let lengthMeters = 5; // дефолтная длина для проверки
-        const volumeMatch = rawVolume.match(/(\d+(?:\.\d+)?)\s*(м|метр|cm|см)/i);
-        if (volumeMatch) {
-            const value = parseFloat(volumeMatch[1]);
-            const unit = volumeMatch[2].toLowerCase();
-            if (unit.includes('м') || unit.includes('метр')) {
-                lengthMeters = value;
-            } else if (unit.includes('см') || unit.includes('cm')) {
-                lengthMeters = value / 100;
-            }
+        if (metrics.uncertainty_comment && metrics.uncertainty_comment.trim().length > 0) {
+            warnings.push(metrics.uncertainty_comment);
         }
 
-        // Проверяем цену за метр
-        const pricePerMeterMin = finalMin / lengthMeters;
-        const pricePerMeterMax = finalMax / lengthMeters;
-        const MIN_PRICE_PER_METER = 200;
-        const MAX_PRICE_PER_METER = 10000;
-
-        if (pricePerMeterMin < MIN_PRICE_PER_METER || pricePerMeterMax > MAX_PRICE_PER_METER) {
-            console.warn(`ЗАЩИТА ОТ БРЕДА: цена за метр вне диапазона (${pricePerMeterMin.toFixed(0)}-${pricePerMeterMax.toFixed(0)} ₽/м), пересчитываем`);
-
-            // Определяем материал для выбора ставки
-            const materialLower = (material || '').toLowerCase();
-            let reasonableMinRate = 500;
-            let reasonableMaxRate = 1000;
-
-            if (materialLower.includes('нерж') || materialLower.includes('stainless')) {
-                reasonableMinRate = 600;
-                reasonableMaxRate = 1500;
-            } else if (materialLower.includes('латун') || materialLower.includes('медь') || materialLower.includes('bronze') || materialLower.includes('copper') || materialLower.includes('brass')) {
-                reasonableMinRate = 800;
-                reasonableMaxRate = 2000;
-            } else if (materialLower.includes('алюмин') || materialLower.includes('aluminum')) {
-                reasonableMinRate = 700;
-                reasonableMaxRate = 1800;
-            }
-
-            // Пересчитываем с разумными ставками
-            const recalcMin = lengthMeters * reasonableMinRate;
-            const recalcMax = lengthMeters * reasonableMaxRate;
-
-            console.log(`Пересчёт: ${lengthMeters}м × ${reasonableMinRate}-${reasonableMaxRate} ₽/м = ${recalcMin}-${recalcMax} ₽`);
-
-            const errorResponse: AiResponse = {
-                aiMin: Math.round(recalcMin),
-                aiMax: Math.round(recalcMax),
-                aiFailed: false,
-                reasonShort: parsed.reasonShort || "Расчёт выполнен с учётом рыночных ставок",
-                reasonLong: parsed.reasonLong + `\n\n(Примечание: первоначальная оценка ИИ была скорректирована в соответствии с актуальными тарифами рынка Тюмени ${reasonableMinRate}-${reasonableMaxRate} ₽/м)`,
-                warnings: [...(parsed.warnings || []), "Цена скорректирована по рыночным ставкам"],
-            };
-            return new Response(JSON.stringify(errorResponse), {
-                status: 200,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-        }
-
-        // Пост-обработка: установка минималки для мелких заказов
-        let adjustedMin = finalMin;
-        let adjustedMax = finalMax;
-
-        // Базовый минимальный чек для мелких заказов
-        const ORDER_MIN_WORK_ONLY = 4000;  // материал заказчика
-        const ORDER_MIN_WITH_MATERIAL = 6000; // если материал исполнителя
-
-        // Признак "мелкий заказ": нет объёма или он небольшой
-        const isSmallJob =
-            !rawVolume ||
-            (/^\s*\d+(\.\d+)?\s*(м|метр)/i.test(rawVolume) && parseFloat(rawVolume) <= 8);
-
-        // Если модель дала числа, поднимаем их до минималки, если нужно
-        if (isSmallJob) {
-            const isContractor = materialOwner === 'contractor';
-            const baseMin = isContractor ? ORDER_MIN_WITH_MATERIAL : ORDER_MIN_WORK_ONLY;
-
-            if (adjustedMin < baseMin) {
-                console.log(`Raising min price from ${adjustedMin} to ${baseMin} (small job, contractor=${isContractor})`);
-                adjustedMin = baseMin;
-            }
-            if (adjustedMax < baseMin + 2000) {
-                console.log(`Raising max price from ${adjustedMax} to ${baseMin + 2000} (small job)`);
-                adjustedMax = baseMin + 2000;
-            }
-        }
-
-        // На всякий случай, если после правок adjustedMax < adjustedMin — выровнять
-        if (adjustedMax < adjustedMin) {
-            adjustedMax = adjustedMin;
-        }
-
-        // Возвращаем успешный результат от ИИ
-        // ВАЖНО: aiMin = adjustedMin, aiMax = adjustedMax (они же finalMin/finalMax)
-        console.log("AI parse success:", { originalMin: finalMin, originalMax: finalMax, adjustedMin, adjustedMax });
+        // Возвращаем успешный результат
+        console.log("AI calculation success:", { totalMin, totalMax, warnings });
         const successResponse: AiResponse = {
-            aiMin: adjustedMin,
-            aiMax: adjustedMax,
+            aiMin: totalMin,
+            aiMax: totalMax,
             aiFailed: false,
-            reasonShort: parsed.reasonShort || "Расчёт выполнен искусственным интеллектом",
-            reasonLong: parsed.reasonLong,
-            warnings: parsed.warnings || [],
+            reasonShort,
+            reasonLong,
+            warnings,
         };
         return new Response(JSON.stringify(successResponse), {
             status: 200,
