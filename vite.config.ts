@@ -5,7 +5,7 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
-  base: '/argo-weld-calc/', // Для корректной работы на GitHub Pages
+  base: "/", // сайт висит в корне домена calc.argo-72.ru
   server: {
     host: "::",
     port: 8080,
